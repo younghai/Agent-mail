@@ -56,4 +56,4 @@ git commit -m "Document Agent Mail release flow"
 git push origin main
 ```
 
-Do not commit `.env`, `node_modules`, `.runtime`, or local cache directories.
+Do not commit `.env`, `node_modules`, `.runtime`, `.codex`, `.omc`, `.omo`, `.wrangler`, or local cache directories.
