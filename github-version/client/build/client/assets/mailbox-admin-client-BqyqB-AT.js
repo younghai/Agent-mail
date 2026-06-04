@@ -1,0 +1,1 @@
+import{default as f,meta as d}from"./admin-client-CpMjc-RQ.js";import"./chunk-QUQL4437-BXPjeQdd.js";import"./loader-hr2w7cpqeev3p3vl-DpvPGCH2.js";import"./ArrowLeft.es-0PY1_dRE.js";import"./IconBase.es-CD2qb-kX.js";import"./api-BAbGSmrM.js";import"./useMailboxParams-na9w9RQW.js";export{f as default,d as meta};

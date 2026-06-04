@@ -1,0 +1,3 @@
+packages:
+  - "mail-server"
+  - "client"

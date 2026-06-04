@@ -1,0 +1,13 @@
+.env
+.DS_Store
+node_modules/
+__pycache__/
+.pytest_cache/
+.venv/
+.runtime/
+*.log
+*.tsbuildinfo
+.omc/
+.omo/
+dist/
+coverage/

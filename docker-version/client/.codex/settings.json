@@ -1,0 +1,18 @@
+{
+  "changeLog": {
+    "required": true,
+    "directory": "docs/change-logs",
+    "filenamePattern": "YYYY-MM-DD-<scope>-<summary>.md",
+    "rule": "Every non-trivial code or UX change must create or update a dated Markdown file before final reporting."
+  },
+  "scopeRules": {
+    "v0OnlyWhenRequested": true,
+    "doNotModifySiblingVersionsUnlessExplicitlyRequested": true
+  },
+  "verification": {
+    "frontend": [
+      "HOME=/private/tmp/codex-home npm run typecheck",
+      "npm run build"
+    ]
+  }
+}

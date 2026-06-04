@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+node '/Users/young/Downloads/personal_project/scripts/node-policy-check.mjs' --scope '/Users/young/Downloads/personal_project/using mail_AI/v0/agent-inbox'

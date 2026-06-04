@@ -1,0 +1,20 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "agentic-inbox-tail",
+	"compatibility_date": "2025-11-28",
+	"main": "./workers/tail-consumer/index.ts",
+	"observability": {
+		"enabled": true
+	},
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"vars": {
+		// Sentry environment tag. SENTRY_DSN is a secret — inject via:
+		//   wrangler secret put SENTRY_DSN --config wrangler.tail-consumer.jsonc
+		"SENTRY_ENVIRONMENT": "production",
+		// Slack alert dedup TTL in minutes. SLACK_ALERT_WEBHOOK_URL is a secret — inject via:
+		//   wrangler secret put SLACK_ALERT_WEBHOOK_URL --config wrangler.tail-consumer.jsonc
+		"SLACK_ALERT_DEDUP_TTL_MINUTES": "30"
+	}
+}
