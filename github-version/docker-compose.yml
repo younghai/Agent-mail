@@ -52,7 +52,7 @@ services:
       - APP_DOMAINS=${APP_DOMAINS:-bizmatrixx.com}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5000,http://127.0.0.1:5000}
       - DEFAULT_MAILBOX_NAME=${DEFAULT_MAILBOX_NAME:-VTStirelab}
-      - RUN_MIGRATIONS=false
+      - RUN_MIGRATIONS=true
     depends_on:
       postgres:
         condition: service_healthy

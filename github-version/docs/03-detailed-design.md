@@ -192,7 +192,7 @@ CREATE INDEX idx_usage_created ON admin_agent_usage_events(created_at);
 
 ### mail-server/src/db.js
 - `pg.Pool` 관리, `query()` 래퍼 (개발 환경에서 SQL 로깅)
-- `initDb()`: `RUN_MIGRATIONS=true` 시 `001_initial.sql` 실행
+- `initDb()`: `RUN_MIGRATIONS=true` 시 `mail-server/migrations/*.sql`을 순서대로 적용하고, Docker entrypoint가 이미 적용한 기존 스키마는 `schema_migrations`에 baseline 처리
 
 ### mail-server/src/redis.js
 - `ioredis` lazy connection, retry strategy

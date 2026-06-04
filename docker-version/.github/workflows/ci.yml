@@ -28,13 +28,17 @@ jobs:
           corepack enable
           corepack prepare pnpm@10.32.1 --activate
 
-      - name: Install Mail Server dependencies
-        working-directory: mail-server
+      - name: Install Node dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Test Mail Server
-        working-directory: mail-server
-        run: pnpm test
+        run: pnpm --filter agentic-inbox-mail-server test
+
+      - name: Typecheck Client
+        run: pnpm --filter @agent-mail/client typecheck
+
+      - name: Build Client
+        run: pnpm --filter @agent-mail/client build
 
       - name: Setup Python
         uses: actions/setup-python@v5

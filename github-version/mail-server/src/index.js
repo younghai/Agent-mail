@@ -19,6 +19,8 @@ import {
 import { CLIENT_STATUSES, TASK_PRIORITIES, TASK_STATUSES, TASK_TYPES, USAGE_STATUSES, isTerminalTaskStatus } from './lib/domain.js';
 import { createInboundSmtpServer } from './lib/inbound-smtp.js';
 import { sendEmail } from './lib/outbound-smtp.js';
+import { upsertInboundEmail } from './lib/inbound-email.js';
+import { registerCompatRoutes } from './routes/compat.js';
 import {
   assertPlainObject,
   getBoundedPagination,
@@ -239,6 +241,7 @@ async function audit(entityType, entityId, action, actor, before, after) {
 }
 
 app.use(requireLocalToken);
+registerCompatRoutes(app, { query, uuidv4, sendEmail, sendError });
 
 // ---------- Config ----------
 app.get('/api/v1/config', async (req, res) => {
@@ -257,6 +260,7 @@ app.get('/api/v1/admin/overview', async (req, res) => {
     { rows: emailTotalsRows },
     { rows: emailsByDayRows },
     { rows: usageRows },
+    { rows: aiJobRows },
   ] = await Promise.all([
     query('SELECT * FROM admin_clients ORDER BY updated_at DESC'),
     query('SELECT * FROM admin_tasks ORDER BY updated_at DESC'),
@@ -291,6 +295,13 @@ app.get('/api/v1/admin/overview', async (req, res) => {
       WHERE created_at >= now() - interval '29 days'
       GROUP BY created_at::date, agent_id
       ORDER BY date ASC, agent_id ASC
+    `),
+    query(`
+      SELECT id, mailbox_id, email_id, job_type, status, attempt_count, max_attempts,
+             error_code, error_message, queued_at, started_at, finished_at, updated_at
+        FROM ai_jobs
+       ORDER BY updated_at DESC
+       LIMIT 20
     `),
   ]);
 
@@ -391,6 +402,21 @@ app.get('/api/v1/admin/overview', async (req, res) => {
         })),
       },
       aiUsage: { day: dayUsage, week: weekUsage, month: monthUsage, total: totalUsage },
+      aiJobs: aiJobRows.map((row) => ({
+        id: row.id,
+        mailboxId: row.mailbox_id,
+        emailId: row.email_id,
+        jobType: row.job_type,
+        status: row.status,
+        attemptCount: row.attempt_count,
+        maxAttempts: row.max_attempts,
+        errorCode: row.error_code || '',
+        errorMessage: row.error_message || '',
+        queuedAt: row.queued_at,
+        startedAt: row.started_at,
+        finishedAt: row.finished_at,
+        updatedAt: row.updated_at,
+      })),
     },
   });
 });
@@ -1004,7 +1030,19 @@ app.post('/api/v1/webhooks/email', async (req, res) => {
     const provided = req.get('x-webhook-secret') || '';
     if (provided !== WEBHOOK_SECRET) return sendError(res, 401, 'Invalid webhook secret');
   }
-  const { mailbox_id, from: sender, to: recipient, subject, body_text, body_html, message_id, in_reply_to, thread_id } = req.body;
+  const {
+    mailbox_id,
+    from: sender,
+    to: recipient,
+    subject,
+    body_text,
+    body_html,
+    message_id,
+    in_reply_to,
+    thread_id,
+    provider = 'webhook',
+    provider_message_id,
+  } = req.body;
   if (!mailbox_id || !sender) return sendError(res, 400, 'mailbox_id and from are required');
   if (!(await ensureMailbox(mailbox_id))) return sendError(res, 404, 'Mailbox not found');
 
@@ -1012,15 +1050,28 @@ app.post('/api/v1/webhooks/email', async (req, res) => {
   const folderId = folderRows[0]?.id;
   if (!folderId) return sendError(res, 500, 'Inbox folder not found');
 
-  const id = uuidv4();
-  const resolvedThread = thread_id || in_reply_to || id;
-  await query(
-    `INSERT INTO emails (id, mailbox_id, folder_id, thread_id, subject, sender, recipient, body_text, body_html, message_id, in_reply_to)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-    [id, mailbox_id, folderId, resolvedThread, subject || '(No subject)', sender, recipient || '', body_text || '', body_html || '', message_id || null, in_reply_to || null],
-  );
-  await publishEmailEvent('new_email', { email_id: id, mailbox_id, sender, subject: subject || '', thread_id: resolvedThread, body_text: body_text || '' });
-  res.status(201).json({ success: true, data: { id, thread_id: resolvedThread } });
+  const result = await upsertInboundEmail({
+    query,
+    mailboxId: mailbox_id,
+    folderId,
+    email: {
+      id: uuidv4(),
+      subject,
+      sender,
+      recipient,
+      body_text,
+      body_html,
+      message_id,
+      in_reply_to,
+      thread_id,
+      provider,
+      provider_message_id,
+    },
+  });
+  if (result.inserted) {
+    await publishEmailEvent('new_email', { email_id: result.id, mailbox_id, sender, subject: subject || '', thread_id: result.thread_id, body_text: body_text || '' });
+  }
+  res.status(result.inserted ? 201 : 200).json({ success: true, data: result });
 });
 
 // ---------- Email Send ----------

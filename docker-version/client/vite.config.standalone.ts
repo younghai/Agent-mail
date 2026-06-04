@@ -43,6 +43,27 @@ export default defineConfig({
 			},
 		},
 	},
+	preview: {
+		host: "0.0.0.0",
+		port: clientPort,
+		proxy: {
+			"/api": {
+				target: apiBaseUrl,
+				changeOrigin: true,
+				headers: {
+					Authorization: `Bearer ${localServiceToken}`,
+				},
+			},
+			"/agents": {
+				target: apiBaseUrl,
+				ws: true,
+				changeOrigin: true,
+				headers: {
+					Authorization: `Bearer ${localServiceToken}`,
+				},
+			},
+		},
+	},
 	plugins: [
 		tailwindcss(),
 		reactRouter(),

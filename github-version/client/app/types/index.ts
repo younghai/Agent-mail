@@ -58,6 +58,9 @@ export interface Email {
 	attachments?: Attachment[];
 	snippet?: string | null;
 	citations_json?: string | null;
+	agent_summary?: string | null;
+	agent_timeline_json?: unknown;
+	agent_tasks_json?: unknown;
 	// Thread aggregate fields (only present in threaded list view)
 	thread_count?: number;
 	thread_unread_count?: number;
@@ -271,4 +274,19 @@ export interface AdminOverview {
 		month: AdminUsageBucket;
 		total: AdminUsageBucket;
 	};
+	aiJobs: Array<{
+		id: string;
+		mailboxId: string;
+		emailId: string | null;
+		jobType: "summary" | "timeline" | "task_extraction" | "draft_generation";
+		status: "queued" | "running" | "succeeded" | "failed" | "blocked" | "dead_letter";
+		attemptCount: number;
+		maxAttempts: number;
+		errorCode: string;
+		errorMessage: string;
+		queuedAt: string;
+		startedAt: string | null;
+		finishedAt: string | null;
+		updatedAt: string;
+	}>;
 }

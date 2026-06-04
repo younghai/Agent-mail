@@ -7,7 +7,7 @@ import time
 import uuid
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Any, Optional
 
 import asyncpg
 import redis.asyncio as aioredis
@@ -106,8 +106,13 @@ async def _handle_email_event(r, msg_id: str, fields: dict) -> None:
         raise RuntimeError("OpenAI API key is not configured")
 
     payload = json.loads(fields.get("payload", "{}"))
+    mailbox_id = payload.get("mailbox_id", "")
+    email_id = payload.get("email_id", "")
+    for job_type in ("summary", "timeline", "task_extraction"):
+        await run_email_analysis_job(mailbox_id, email_id, job_type)
+
     req = DraftRequest(
-        email_id=payload.get("email_id", ""),
+        email_id=email_id,
         sender=payload.get("sender"),
         subject=payload.get("subject"),
         thread_id=payload.get("thread_id"),
@@ -117,7 +122,7 @@ async def _handle_email_event(r, msg_id: str, fields: dict) -> None:
     last_error: Exception | None = None
     for attempt in range(1, AI_AUTO_DRAFT_MAX_ATTEMPTS + 1):
         try:
-            result = await create_draft(payload.get("mailbox_id", ""), req)
+            result = await create_draft(mailbox_id, req)
             if isinstance(result, JSONResponse) and result.status_code >= 400:
                 raise RuntimeError(f"auto-draft failed with status {result.status_code}")
             return
@@ -297,6 +302,148 @@ async def record_agent_usage(
         print(f"usage recording failed: {exc}")
 
 
+async def create_ai_job(mailbox_id: str, email_id: str, job_type: str) -> str:
+    job_id = str(uuid.uuid4())
+    pool = await get_pool()
+    await pool.execute(
+        """INSERT INTO ai_jobs
+           (id, mailbox_id, email_id, job_type, status, attempt_count, started_at, updated_at)
+           VALUES ($1, $2, $3, $4, 'running', 1, now(), now())""",
+        job_id, mailbox_id, email_id, job_type,
+    )
+    return job_id
+
+
+async def finish_ai_job(
+    job_id: str,
+    status: str,
+    result: dict | None = None,
+    error_code: str = "",
+    error_message: str = "",
+) -> None:
+    pool = await get_pool()
+    await pool.execute(
+        """UPDATE ai_jobs
+              SET status = $1,
+                  result_json = $2::jsonb,
+                  error_code = NULLIF($3, ''),
+                  error_message = NULLIF($4, ''),
+                  finished_at = now(),
+                  updated_at = now()
+            WHERE id = $5""",
+        status, json.dumps(result or {}), error_code, error_message, job_id,
+    )
+
+
+def parse_json_object(text: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else {"items": parsed}
+    except json.JSONDecodeError:
+        return {"raw": text}
+
+
+async def load_email_context(mailbox_id: str, email_id: str) -> tuple[asyncpg.Record | None, str]:
+    pool = await get_pool()
+    email = await pool.fetchrow(
+        "SELECT id, thread_id, subject, sender, recipient, body_text, received_at FROM emails WHERE mailbox_id = $1 AND id = $2",
+        mailbox_id, email_id,
+    )
+    if not email:
+        return None, ""
+    rows = await pool.fetch(
+        """SELECT sender, recipient, body_text, received_at
+             FROM emails
+            WHERE mailbox_id = $1 AND thread_id = $2 AND is_draft = false
+            ORDER BY received_at ASC
+            LIMIT 30""",
+        mailbox_id, email["thread_id"] or email_id,
+    )
+    thread_context = "\n\n".join(
+        f"[{r['received_at']}] {r['sender']} -> {r['recipient']}: {truncate_text(r['body_text'] or '', 1000)}"
+        for r in rows
+    )
+    return email, thread_context
+
+
+def analysis_prompt(job_type: str, email: asyncpg.Record, thread_context: str) -> str:
+    base = f"""Analyze this email thread and return strict JSON only.
+
+Current email:
+From: {email['sender'] or 'Unknown'}
+To: {email['recipient'] or 'Unknown'}
+Subject: {email['subject'] or 'No subject'}
+Body:
+{truncate_text(email['body_text'] or '', MAX_CONTEXT_CHARS)}
+
+Thread context:
+{truncate_text(thread_context, MAX_CONTEXT_CHARS)}
+"""
+    if job_type == "summary":
+        return base + """Return {"summary": "...", "sentiment": "positive|neutral|negative", "risk_level": "low|medium|high", "key_points": ["..."]}."""
+    if job_type == "timeline":
+        return base + """Return {"timeline": [{"at": "ISO or source timestamp", "actor": "...", "event": "..."}], "next_milestone": "..."}."""
+    return base + """Return {"tasks": [{"title": "...", "owner": "...", "priority": "low|normal|high|urgent", "due_date": "", "evidence": "..."}], "requires_human_review": true}."""
+
+
+async def run_email_analysis_job(mailbox_id: str, email_id: str, job_type: str) -> None:
+    if not mailbox_id or not email_id:
+        return
+    job_id = await create_ai_job(mailbox_id, email_id, job_type)
+    started_at = time.perf_counter()
+    try:
+        email, thread_context = await load_email_context(mailbox_id, email_id)
+        if not email:
+            await finish_ai_job(job_id, "failed", error_code="not_found", error_message="Email not found")
+            return
+
+        source_text = f"{email['body_text'] or ''}\n{thread_context}"
+        if contains_prompt_injection(source_text):
+            await finish_ai_job(job_id, "blocked", error_code="prompt_injection", error_message="Potential prompt-injection content detected")
+            await record_agent_usage(mailbox_id, job_type, "blocked", error_code="prompt_injection")
+            return
+
+        response = await client.chat.completions.create(
+            model=AI_MODEL,
+            messages=[
+                {"role": "system", "content": "You are an email operations analyst. Return strict JSON only."},
+                {"role": "user", "content": analysis_prompt(job_type, email, thread_context)},
+            ],
+            temperature=0.2,
+            max_tokens=1200,
+            response_format={"type": "json_object"},
+        )
+        latency_ms = int((time.perf_counter() - started_at) * 1000)
+        await record_agent_usage(mailbox_id, job_type, "ok", response.usage, latency_ms=latency_ms)
+        result = parse_json_object(response.choices[0].message.content or "{}")
+        pool = await get_pool()
+        if job_type == "summary":
+            await pool.execute(
+                "UPDATE emails SET agent_summary = $1, updated_at = now() WHERE mailbox_id = $2 AND id = $3",
+                result.get("summary") or json.dumps(result, ensure_ascii=False), mailbox_id, email_id,
+            )
+        elif job_type == "timeline":
+            await pool.execute(
+                "UPDATE emails SET agent_timeline_json = $1::jsonb, updated_at = now() WHERE mailbox_id = $2 AND id = $3",
+                json.dumps(result, ensure_ascii=False), mailbox_id, email_id,
+            )
+        else:
+            await pool.execute(
+                "UPDATE emails SET agent_tasks_json = $1::jsonb, updated_at = now() WHERE mailbox_id = $2 AND id = $3",
+                json.dumps(result, ensure_ascii=False), mailbox_id, email_id,
+            )
+        await finish_ai_job(job_id, "succeeded", result)
+    except Exception as exc:
+        await finish_ai_job(job_id, "failed", error_code=exc.__class__.__name__, error_message=str(exc))
+        await record_agent_usage(
+            mailbox_id,
+            job_type,
+            "error",
+            error_code=exc.__class__.__name__,
+            latency_ms=int((time.perf_counter() - started_at) * 1000),
+        )
+
+
 @app.post("/api/v1/mailboxes/{mailbox_id}/ai/draft")
 async def create_draft(mailbox_id: str, req: DraftRequest):
     if not client:
@@ -306,6 +453,7 @@ async def create_draft(mailbox_id: str, req: DraftRequest):
         return JSONResponse(status_code=429, content={"success": False, "error": {"code": "RATE_LIMIT", "message": "AI rate limit exceeded"}})
 
     pool = await get_pool()
+    job_id = await create_ai_job(mailbox_id, req.email_id, "draft_generation")
 
     # Load thread context
     thread_context = ""
@@ -325,6 +473,7 @@ async def create_draft(mailbox_id: str, req: DraftRequest):
 
     source_text = f"{req.body_text or ''}\n{thread_context}"
     if contains_prompt_injection(source_text):
+        await finish_ai_job(job_id, "blocked", error_code="prompt_injection", error_message="Potential prompt-injection content detected")
         await record_agent_usage(mailbox_id, "auto_draft", "blocked", error_code="prompt_injection")
         return JSONResponse(
             status_code=422,
@@ -372,17 +521,25 @@ Draft a natural, human-like reply in plain text. Do not use markdown formatting,
                 folder_id = folder_row["id"] if folder_row else None
                 await conn.execute(
                     """INSERT INTO emails
-                       (id, mailbox_id, folder_id, thread_id, subject, sender, recipient, body_text, body_html, in_reply_to, is_draft)
-                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true)""",
+                       (id, mailbox_id, folder_id, thread_id, subject, sender, recipient, body_text, body_html,
+                        in_reply_to, is_draft, approval_state, approval_meta)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, 'pending', $11::jsonb)""",
                     draft_id, mailbox_id, folder_id,
                     req.thread_id or req.email_id, re_subject,
                     mailbox_id, (req.sender or "").lower(),
                     draft_text, plain_text_to_html(draft_text), req.email_id,
+                    json.dumps({"submitted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "source": "ai-agent"}),
                 )
 
+        await finish_ai_job(
+            job_id,
+            "succeeded",
+            {"draft_id": draft_id, "subject": re_subject, "operation": "draft_generation"},
+        )
         return {"success": True, "data": {"draft_id": draft_id, "subject": re_subject, "body_text": draft_text}}
     except Exception as e:
         latency_ms = int((time.perf_counter() - started_at) * 1000)
+        await finish_ai_job(job_id, "failed", error_code=e.__class__.__name__, error_message=str(e))
         await record_agent_usage(mailbox_id, "auto_draft", "error", error_code=e.__class__.__name__, latency_ms=latency_ms)
         return JSONResponse(status_code=500, content={"success": False, "error": {"code": "INTERNAL_ERROR", "message": str(e)}})
 

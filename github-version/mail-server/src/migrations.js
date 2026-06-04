@@ -48,7 +48,7 @@ export async function runMigrations(pool, migrationsDir) {
       console.log(`Applied migration ${file}`);
     } catch (err) {
       await client.query('ROLLBACK');
-      if (file.startsWith('001_') && isAlreadyAppliedError(err)) {
+      if (isAlreadyAppliedError(err)) {
         await pool.query(
           `INSERT INTO ${MIGRATION_TABLE} (filename, checksum) VALUES ($1, $2)
            ON CONFLICT (filename) DO NOTHING`,

@@ -259,6 +259,7 @@ export const EMPTY_OVERVIEW: AdminOverview = {
 		month: EMPTY_USAGE_BUCKET,
 		total: EMPTY_USAGE_BUCKET,
 	},
+	aiJobs: [],
 };
 
 export function makeDemoOverview(data: AdminOverview): AdminOverview {

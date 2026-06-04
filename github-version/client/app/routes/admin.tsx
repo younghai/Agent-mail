@@ -357,6 +357,7 @@ function AIAgentsOverview({ data }: { data: AdminOverview }) {
 		{ date: "2026-05-04", agentId: "triage-agent", calls: 58, inputTokens: 14800, outputTokens: 3200, chatHits: 9, costUsd: 3.2, errors: 0, blocked: 1, limit: 120 },
 		{ date: "2026-05-05", agentId: "timeline-agent", calls: 42, inputTokens: 11200, outputTokens: 2800, chatHits: 7, costUsd: 2.7, errors: 1, blocked: 0, limit: 120 },
 	];
+	const jobs = data.aiJobs ?? [];
 	return (
 		<div className="space-y-4">
 			<div className="grid gap-3 md:grid-cols-4">
@@ -379,6 +380,30 @@ function AIAgentsOverview({ data }: { data: AdminOverview }) {
 								<td className="px-4 py-3">{(row.inputTokens + row.outputTokens).toLocaleString()}</td>
 								<td className="px-4 py-3">${row.costUsd.toFixed(2)}</td>
 								<td className="px-4 py-3">{row.limit ?? "-"}</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
+			<div className="overflow-hidden rounded-xl border border-kumo-line">
+				<div className="border-b border-kumo-line bg-kumo-recessed px-4 py-3">
+					<h3 className="text-sm font-semibold text-kumo-default">AI workflow jobs</h3>
+					<p className="mt-1 text-xs text-kumo-subtle">Summary, timeline, task extraction, and draft generation job status.</p>
+				</div>
+				<table className="w-full text-left text-sm">
+					<thead className="bg-kumo-recessed text-xs uppercase tracking-wide text-kumo-subtle">
+						<tr><th className="px-4 py-3">Job</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Attempts</th><th className="px-4 py-3">Updated</th><th className="px-4 py-3">Error</th></tr>
+					</thead>
+					<tbody>
+						{jobs.length === 0 ? (
+							<tr><td colSpan={5} className="px-4 py-6 text-center text-kumo-subtle">No AI workflow jobs yet.</td></tr>
+						) : jobs.slice(0, 10).map((job) => (
+							<tr key={job.id} className="border-t border-kumo-line">
+								<td className="px-4 py-3 font-medium">{job.jobType}</td>
+								<td className="px-4 py-3 text-kumo-subtle">{job.status}</td>
+								<td className="px-4 py-3">{job.attemptCount}/{job.maxAttempts}</td>
+								<td className="px-4 py-3 text-kumo-subtle">{String(job.updatedAt).slice(0, 19).replace("T", " ")}</td>
+								<td className="px-4 py-3 text-kumo-subtle">{job.errorCode || job.errorMessage || "-"}</td>
 							</tr>
 						))}
 					</tbody>

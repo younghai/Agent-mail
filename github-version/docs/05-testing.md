@@ -99,21 +99,33 @@ test('user reads email and requests AI draft', async ({ page }) => {
 | Auth Bypass | 토큰 없이 API 호출 | 401 응답 확인 |
 | Rate Limit | 21회/분 AI 호출 | 429 응답 확인 |
 
-## CI/CD 파이프라인 (권장)
+## CI/CD 파이프라인
 
 ```yaml
-# .github/workflows/test.yml (예시)
-name: Test
-on: [push, pull_request]
+# .github/workflows/ci.yml
+name: Agent Mail CI
+on:
+  push:
+  pull_request:
 jobs:
-  test:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Start services
-        run: docker compose -f v1-present/docker-compose.yml up -d postgres redis minio
-      - name: Test mail-server
-        run: cd v1-present/mail-server && npm ci && npm test
-      - name: Test ai-agent
-        run: cd v1-present/ai-agent && pip install -r requirements.txt && pytest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test Mail Server
+        run: pnpm --filter agentic-inbox-mail-server test
+      - name: Typecheck Client
+        run: pnpm --filter @agent-mail/client typecheck
+      - name: Build Client
+        run: pnpm --filter @agent-mail/client build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test AI Agent
+        run: python -m pytest ai-agent/tests
 ```

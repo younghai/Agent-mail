@@ -1,6 +1,7 @@
 import { SMTPServer } from 'smtp-server';
 import { simpleParser } from 'mailparser';
 import { v4 as uuidv4 } from 'uuid';
+import { upsertInboundEmail } from './inbound-email.js';
 
 /**
  * SMTP 수신 서버 생성.
@@ -38,31 +39,33 @@ export function createInboundSmtpServer({ query, publishEmailEvent }) {
         const folderId = folderRows[0]?.id;
         if (!folderId) { callback(new Error('Inbox folder not found')); return; }
 
-        const id = uuidv4();
         const inReplyTo = parsed.inReplyTo || null;
-        const resolvedThread = inReplyTo || id;
         const messageId = parsed.messageId || null;
 
-        await query(
-          `INSERT INTO emails
-            (id, mailbox_id, folder_id, thread_id, subject, sender, recipient,
-             body_text, body_html, message_id, in_reply_to)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-          [
-            id, mailboxId, folderId, resolvedThread,
-            parsed.subject || '(No subject)',
-            sender, recipient,
-            parsed.text || '',
-            parsed.html || '',
-            messageId, inReplyTo,
-          ]
-        );
-
-        await publishEmailEvent('new_email', {
-          email_id: id, mailbox_id: mailboxId,
-          sender, subject: parsed.subject || '', thread_id: resolvedThread,
-          body_text: parsed.text || '',
+        const result = await upsertInboundEmail({
+          query,
+          mailboxId,
+          folderId,
+          email: {
+            id: uuidv4(),
+            subject: parsed.subject,
+            sender,
+            recipient,
+            body_text: parsed.text,
+            body_html: parsed.html,
+            message_id: messageId,
+            in_reply_to: inReplyTo,
+            provider: 'smtp',
+          },
         });
+
+        if (result.inserted) {
+          await publishEmailEvent('new_email', {
+            email_id: result.id, mailbox_id: mailboxId,
+            sender, subject: parsed.subject || '', thread_id: result.thread_id,
+            body_text: parsed.text || '',
+          });
+        }
 
         callback();
       } catch (err) {
