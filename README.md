@@ -75,7 +75,120 @@ agent-mail-replit/
 
 The `docker-version/` replica, `.git` history, developer notes, runtime data, `node_modules/`, `.pythonlibs/`, caches, and previous build outputs were excluded. Original Docker/Cloudflare sources and examples inside `github-version/` remain for compatibility reference.
 
-## 4. Publishing to GitHub
+## 4. Service Architecture
+
+The full-system diagrams below are shared with [`github-version/README.md`](github-version/README.md). They describe the complete application. Which parts actually run depends on the environment — see [Runtime by environment](#runtime-by-environment); on the Replit production path, intake/AI/queue services are intentionally not started.
+
+### Service architecture
+
+```mermaid
+flowchart TB
+  subgraph Browser["User Surface"]
+    user[User]
+    ui[React Client<br/>localhost:5000]
+  end
+
+  subgraph Backend["Application Services"]
+    api[Mail Server API<br/>Node.js / Express<br/>localhost:5174]
+    agent[AI Agent<br/>Python / FastAPI<br/>localhost:5100]
+  end
+
+  subgraph Data["State and Infrastructure"]
+    pg[(PostgreSQL<br/>mailboxes, emails, threads, drafts, tasks)]
+    redis[(Redis Streams<br/>email events and AI queue)]
+    minio[(MinIO / S3<br/>attachments)]
+  end
+
+  subgraph External["External Integrations"]
+    smtp[SMTP / Webhook Mail Ingestion]
+    llm[OpenAI-compatible LLM]
+  end
+
+  user --> ui
+  ui -->|REST API with local service token| api
+  smtp -->|incoming email| api
+  api --> pg
+  api --> redis
+  api --> minio
+  api -->|draft/chat request| agent
+  agent --> pg
+  agent --> redis
+  agent --> llm
+```
+
+### Mail agent workflow
+
+```mermaid
+sequenceDiagram
+  participant Sender as Sender
+  participant API as Mail Server API
+  participant DB as PostgreSQL
+  participant Queue as Redis Stream
+  participant Agent as AI Agent
+  participant LLM as LLM Provider
+  participant UI as React UI
+  participant User as User
+
+  Sender->>API: Inbound SMTP or webhook email
+  API->>DB: Store mailbox, folder, email, thread, attachment metadata
+  API->>Queue: Publish new_email event
+  Agent->>Queue: Consume email event
+  Agent->>DB: Load thread context
+  Agent->>LLM: Generate summary or reply draft
+  Agent->>DB: Save draft and usage metadata
+  User->>UI: Open inbox and selected thread
+  UI->>API: Request email detail, timeline, tasks, draft candidates
+  API->>UI: Return mail and agent outputs
+```
+
+On the Replit production path, the first step (SMTP/webhook intake) and the AI Agent/LLM calls are not connected (`503 SERVICE_NOT_CONFIGURED`). The seeded campaign scenarios power the review actions instead of live LLM analysis.
+
+### User flow
+
+Generic inbox review flow:
+
+```mermaid
+flowchart LR
+  inbox[Open Inbox] --> list[Review Mail List]
+  list --> detail[Open Thread Detail]
+  detail --> summary[Read AI Summary]
+  summary --> timeline[Review Timeline and Tasks]
+  timeline --> draft[Review Reply Draft]
+  draft --> decision{Human Decision}
+  decision --> approve[Approve Draft]
+  decision --> edit[Request or Apply Edits]
+  decision --> hold[Keep for Review]
+```
+
+Campaign review flow in the current Replit inbox (nothing is sent or published):
+
+```mermaid
+flowchart LR
+  login[Admin login] --> inbox[Open Inbox]
+  inbox --> select[Select a seeded campaign email]
+  select --> summary[Summary: review the request]
+  summary --> requirement[Requirement: edit structured details]
+  requirement --> draft[Draft reply: review and save]
+  draft --> campaign[Make campaign: save DRAFT]
+  campaign --> refine{Mandatory fields complete?}
+  refine -->|no| requirement
+  refine -->|yes| done[Campaign draft stored]
+```
+
+### Runtime by environment
+
+| Component | Dev preview (`start-replit.sh`) | Replit production (`start-production.sh`) |
+|---|---|---|
+| React Client | Vite dev server on `0.0.0.0:5000` | Built SPA served by the single Node web/API server |
+| Mail Server API | `127.0.0.1:5174` (internal) | Merged into the web/API server on `0.0.0.0:5000` |
+| Browser auth | Dev proxy with fixed local service token (keep private) | Admin password login, PostgreSQL session, Secure/HttpOnly cookie |
+| AI Agent (Python) | `127.0.0.1:5100` (internal) | Not started; endpoints return `503 SERVICE_NOT_CONFIGURED` |
+| PostgreSQL | Replit-provided dev DB | Replit-provided prod DB; schema promoted via Publishing |
+| Redis | Local dev service (events/queue) | Not started |
+| MinIO / S3 | Local dev MinIO (`.runtime/`) | Not started; attachments require an external HTTPS S3 config |
+| SMTP in/out | Not started | Sending blocked (`403 SENDING_DISABLED`), intake not connected (`503`) |
+
+## 5. Publishing to GitHub
 
 ### New, empty repository
 
@@ -100,9 +213,9 @@ Clone the existing repository and apply this package **on a new branch**, then r
 
 This package does not push to GitHub by itself. The top-level CI only runs tests/builds and publishes nothing to Cloudflare or Replit. The nested legacy `.github/` folder is reference-only and does not run unless promoted to the GitHub top level.
 
-## 5. Replit Development Environment
+## 6. Replit Development Environment
 
-### 5.1 Import and prepare
+### 6.1 Import and prepare
 
 1. Import the GitHub repository via [Replit Import](https://replit.com/import).
 2. Uses Node.js **22**, pnpm **10.32.1**, Python **3.12**, and uv. `.replit` contains the required runtimes and Nix packages such as Redis/MinIO.
@@ -116,7 +229,7 @@ bash github-version/scripts/post-merge.sh
 
 This script installs from the pinned pnpm/uv lock files. It does not initialize the DB or start servers.
 
-### 5.2 Required configuration
+### 6.2 Required configuration
 
 | Name | Dev | Prod | Description |
 |---|---|---|---|
@@ -133,7 +246,7 @@ Production `OPENAI_API_KEY` and SMTP passwords are not needed for the current fe
 
 `.env.example` is descriptive only. On Replit, use the Secrets/environment management screen. Do not use the example file as real configuration, and never put passwords or keys into `VITE_*` variables.
 
-### 5.3 Development preview
+### 6.3 Development preview
 
 ```bash
 bash github-version/scripts/start-replit.sh
@@ -149,9 +262,9 @@ Or start the `Agent Mail` workflow from Run.
 
 **Keep the dev preview private.** The dev proxy grants fixed local admin privileges. Never use this dev script as the production run command.
 
-## 6. Using the Inbox
+## 7. Using the Inbox
 
-### 6.1 Seeding sample campaign emails
+### 7.1 Seeding sample campaign emails
 
 Current DB mails are not in the ZIP. In a new environment, seed samples after the DB is ready. If an existing DB is connected, seed only into the intended mailbox.
 
@@ -174,7 +287,7 @@ location.reload();
 
 This does not bypass server auth or put passwords in the console. In production it requires a normal login session and a same-origin HTTPS request. Repeated runs do not duplicate existing samples. `refreshContent: true` rewrites existing sample bodies — use it only when you intend to refresh content.
 
-### 6.2 Included scenarios
+### 7.2 Included scenarios
 
 | Company | Example products/services | Request type |
 |---|---|---|
@@ -186,7 +299,7 @@ Nine total, including `Popup`, `Web push`, and `Inline banner` requests, with pr
 
 These scenarios are not real corporate requests, and the bundled images are examples for campaign review. Before any real advertising or public use, verify trademarks, product images, and content usage rights separately.
 
-### 6.3 The four buttons above each email
+### 7.3 The four buttons above each email
 
 1. **Summary**: review the request summary — products, campaign goal, channels, and more.
 2. **Draft reply**: review, edit, and save a draft reply. **Does not send email.**
@@ -195,9 +308,9 @@ These scenarios are not real corporate requests, and the bundled images are exam
 
 If a previously saved campaign draft shows as stale after requirement changes, save it again from the current requirements. The four buttons appear on recognizable sample campaign emails. Do not expect the same AI results to be auto-generated for arbitrary emails.
 
-## 7. Replit Production Build and Publish
+## 8. Replit Production Build and Publish
 
-### 7.1 Production commands
+### 8.1 Production commands
 
 From the repository root:
 
@@ -215,7 +328,7 @@ The production runner sets `NODE_ENV=production`, `APP_ENV=production`, `REPLIT_
 
 Production login assumes HTTPS and Secure cookies. Do not test production login over plain `http://localhost` and treat it as equivalent to a real deployment.
 
-### 7.2 Publishing configuration
+### 8.2 Publishing configuration
 
 | Setting | Value |
 |---|---|
@@ -232,7 +345,7 @@ Prepare the development DB schema first, then review the schema changes Publishi
 
 If deployment region selection is offered, confirm it before the first publish. The region cannot be changed after the first publish. The actual Publish action must be performed by the owner.
 
-### 7.3 Port configuration and the known issue
+### 8.3 Port configuration and the known issue
 
 The package's `.replit` is configured as:
 
@@ -257,7 +370,7 @@ In the original workspace, even with the file change verified, the mapping rever
 
 If the problem reproduces, do not repeat the same file edit and restart. Distinguish the config file values from the actual wiring shown in the Networking panel.
 
-### 7.4 Post-publish checks
+### 8.4 Post-publish checks
 
 - `/health` and `/ready` respond and the DB connection is healthy.
 - Logged out: `/` shows the login screen and `/api/v1/mailboxes` returns `401`.
@@ -268,7 +381,7 @@ If the problem reproduces, do not repeat the same file edit and restart. Disting
 
 A `200` on `/` alone does not mean login setup or all features are ready. The info page renders even when the admin password is missing or too short, while the mail API stays locked.
 
-## 8. Operations and Security Notes
+## 9. Operations and Security Notes
 
 ### Login and access
 
@@ -304,7 +417,7 @@ A `200` on `/` alone does not mean login setup or all features are ready. The in
 
 Never log passwords, connection strings, or session tokens. After fixes, re-run/re-publish the environment and verify the actual login/save paths.
 
-## 9. Testing and File Verification
+## 10. Testing and File Verification
 
 ```bash
 # From the repository root
@@ -322,7 +435,7 @@ GitHub Actions runs the Mail Server tests and the Replit production build. It pe
 
 `VALIDATION.md` records which checks were actually run for this package and which were not. After modifying sources, checksums differing from the first release is expected.
 
-## 10. Source, License, and References
+## 11. Source, License, and References
 
 - Previous project overview: [`github-version/README.md`](github-version/README.md)
 - Previous development docs: [`github-version/DEVELOPMENT.md`](github-version/DEVELOPMENT.md)

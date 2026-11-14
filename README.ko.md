@@ -75,7 +75,120 @@ agent-mail-replit/
 
 `docker-version/` 복제본, `.git` 이력, 개발자 메모, 런타임 데이터, `node_modules/`, `.pythonlibs/`, 캐시, 기존 빌드 결과는 제외했습니다. `github-version/` 안의 원래 Docker/Cloudflare 관련 소스와 예제는 호환성 참고용으로 남겼습니다.
 
-## 4. GitHub에 올리는 방법
+## 4. 서비스 아키텍처
+
+아래 전체 시스템 다이어그램은 [`github-version/README.md`](github-version/README.md)와 공유합니다. 애플리케이션 전체를 설명하며, 실제로 어디까지 기동하는지는 환경에 따라 다릅니다. 아래 [환경별 런타임](#환경별-런타임) 표를 함께 확인하세요. Replit 운영 경로에서는 수신/AI/큐 서비스를 의도적으로 기동하지 않습니다.
+
+### 서비스 구성
+
+```mermaid
+flowchart TB
+  subgraph Browser["사용자 화면"]
+    user[사용자]
+    ui[React 클라이언트<br/>localhost:5000]
+  end
+
+  subgraph Backend["애플리케이션 서비스"]
+    api[메일 서버 API<br/>Node.js / Express<br/>localhost:5174]
+    agent[AI 에이전트<br/>Python / FastAPI<br/>localhost:5100]
+  end
+
+  subgraph Data["상태 및 인프라"]
+    pg[(PostgreSQL<br/>메일함, 메일, 스레드, 초안, 작업)]
+    redis[(Redis Streams<br/>메일 이벤트 및 AI 큐)]
+    minio[(MinIO / S3<br/>첨부파일)]
+  end
+
+  subgraph External["외부 연동"]
+    smtp[SMTP / 웹훅 메일 수신]
+    llm[OpenAI 호환 LLM]
+  end
+
+  user --> ui
+  ui -->|로컬 서비스 토큰 기반 REST API| api
+  smtp -->|수신 메일| api
+  api --> pg
+  api --> redis
+  api --> minio
+  api -->|초안/대화 요청| agent
+  agent --> pg
+  agent --> redis
+  agent --> llm
+```
+
+### 메일 에이전트 워크플로
+
+```mermaid
+sequenceDiagram
+  participant Sender as 발신자
+  participant API as 메일 서버 API
+  participant DB as PostgreSQL
+  participant Queue as Redis Stream
+  participant Agent as AI 에이전트
+  participant LLM as LLM 제공자
+  participant UI as React UI
+  participant User as 사용자
+
+  Sender->>API: SMTP 또는 웹훅으로 메일 수신
+  API->>DB: 메일함, 폴더, 메일, 스레드, 첨부 메타데이터 저장
+  API->>Queue: new_email 이벤트 발행
+  Agent->>Queue: 메일 이벤트 소비
+  Agent->>DB: 스레드 컨텍스트 로드
+  Agent->>LLM: 요약 또는 답변 초안 생성
+  Agent->>DB: 초안 및 사용량 메타데이터 저장
+  User->>UI: Inbox와 선택한 스레드 열기
+  UI->>API: 메일 상세, 타임라인, 작업, 초안 후보 요청
+  API->>UI: 메일과 에이전트 결과 반환
+```
+
+Replit 운영 경로에서는 첫 단계(SMTP/웹훅 수신)와 AI 에이전트/LLM 호출이 연결되어 있지 않습니다(`503 SERVICE_NOT_CONFIGURED`). 실시간 LLM 분석 대신 포함된 캠페인 시나리오가 검토 액션을 구동합니다.
+
+### 사용자 흐름
+
+일반 Inbox 검토 흐름:
+
+```mermaid
+flowchart LR
+  inbox[Inbox 열기] --> list[메일 목록 검토]
+  list --> detail[스레드 상세 열기]
+  detail --> summary[AI 요약 읽기]
+  summary --> timeline[타임라인·작업 검토]
+  timeline --> draft[답변 초안 검토]
+  draft --> decision{사용자 결정}
+  decision --> approve[초안 승인]
+  decision --> edit[수정 요청 또는 반영]
+  decision --> hold[계속 검토 보관]
+```
+
+현재 Replit Inbox의 캠페인 검토 흐름 (발송·게시 없음):
+
+```mermaid
+flowchart LR
+  login[관리자 로그인] --> inbox[Inbox 열기]
+  inbox --> select[샘플 캠페인 메일 선택]
+  select --> summary[Summary: 요청 요약 확인]
+  summary --> requirement[Requirement: 구조화 요구사항 편집]
+  requirement --> draft[Draft reply: 검토·저장]
+  draft --> campaign[Make campaign: DRAFT 저장]
+  campaign --> refine{필수 항목 충족?}
+  refine -->|아니오| requirement
+  refine -->|예| done[캠페인 초안 저장 완료]
+```
+
+### 환경별 런타임
+
+| 구성 요소 | 개발 미리보기 (`start-replit.sh`) | Replit 운영 (`start-production.sh`) |
+|---|---|---|
+| React 클라이언트 | Vite 개발 서버 `0.0.0.0:5000` | 단일 Node 웹/API 서버가 빌드된 SPA 서빙 |
+| 메일 서버 API | `127.0.0.1:5174` (내부) | 웹/API 서버로 통합, `0.0.0.0:5000` |
+| 브라우저 인증 | 개발 프록시 + 고정 로컬 서비스 토큰 (비공개 유지) | 관리자 비밀번호 로그인, PostgreSQL 세션, Secure/HttpOnly 쿠키 |
+| AI 에이전트 (Python) | `127.0.0.1:5100` (내부) | 기동 안 함; 엔드포인트는 `503 SERVICE_NOT_CONFIGURED` |
+| PostgreSQL | Replit 제공 개발 DB | Replit 제공 운영 DB; 스키마는 Publishing으로 반영 |
+| Redis | 로컬 개발 서비스 (이벤트/큐) | 기동 안 함 |
+| MinIO / S3 | 로컬 개발 MinIO (`.runtime/`) | 기동 안 함; 첨부파일은 외부 HTTPS S3 설정 필요 |
+| SMTP 수신/발송 | 기동 안 함 | 발송 차단(`403 SENDING_DISABLED`), 수신 미연결(`503`) |
+
+## 5. GitHub에 올리는 방법
 
 ### 새 빈 저장소
 
@@ -100,9 +213,9 @@ git push -u origin main
 
 이 패키지는 GitHub에 자동으로 push하지 않습니다. 최상위 CI도 테스트/빌드만 수행하며 Cloudflare나 Replit에 자동 게시하지 않습니다. 중첩된 기존 `.github/` 폴더는 원본 참고용이며 GitHub 최상위 워크플로로 옮기지 않는 한 실행되지 않습니다.
 
-## 5. Replit 개발 환경 설치
+## 6. Replit 개발 환경 설치
 
-### 5.1 가져오기 및 준비
+### 6.1 가져오기 및 준비
 
 1. [Replit Import](https://replit.com/import)에서 GitHub 저장소를 가져옵니다.
 2. Node.js **22**, pnpm **10.32.1**, Python **3.12**, uv를 사용합니다. `.replit`에는 필요한 런타임과 Redis/MinIO 등 Nix 패키지 설정이 들어 있습니다.
@@ -116,7 +229,7 @@ bash github-version/scripts/post-merge.sh
 
 이 스크립트는 고정된 pnpm/uv 잠금 파일로 설치합니다. DB 초기화나 서버 기동은 하지 않습니다.
 
-### 5.2 필수 설정
+### 6.2 필수 설정
 
 | 이름 | 개발 | 운영 | 설명 |
 |---|---|---|---|
@@ -133,7 +246,7 @@ bash github-version/scripts/post-merge.sh
 
 `.env.example`은 항목 설명용입니다. Replit에서는 Secrets/환경변수 관리 화면을 사용하세요. 예제 파일을 그대로 실제 설정으로 사용하지 마세요. `VITE_*` 변수에 비밀번호나 키를 넣지 마세요.
 
-### 5.3 개발 미리보기
+### 6.3 개발 미리보기
 
 ```bash
 bash github-version/scripts/start-replit.sh
@@ -149,9 +262,9 @@ bash github-version/scripts/start-replit.sh
 
 **개발 미리보기는 반드시 비공개로 유지하세요.** 개발 프록시는 고정된 로컬 관리자 권한을 부여합니다. 이 개발 스크립트를 운영 실행 명령으로 사용하면 안 됩니다.
 
-## 6. Inbox 사용법
+## 7. Inbox 사용법
 
-### 6.1 샘플 캠페인 메일 생성
+### 7.1 샘플 캠페인 메일 생성
 
 현재 DB의 메일은 ZIP에 포함되지 않습니다. 새 환경에서는 DB 준비 후 샘플을 생성해야 합니다. 기존 DB가 연결되어 있으면 필요한 메일함에만 생성하세요.
 
@@ -174,7 +287,7 @@ location.reload();
 
 서버 인증을 우회하거나 비밀번호를 콘솔에 넣는 방식이 아닙니다. 운영에서는 정상 로그인 세션과 동일 출처 HTTPS 요청이 필요합니다. 반복 실행 시 기존 샘플을 중복 생성하지 않습니다. `refreshContent: true`는 기존 샘플 본문을 갱신하므로, 본문 갱신이 필요한 경우에만 사용하세요.
 
-### 6.2 포함된 시나리오
+### 7.2 포함된 시나리오
 
 | 기업 | 상품/서비스 예시 | 요청 유형 |
 |---|---|---|
@@ -186,7 +299,7 @@ location.reload();
 
 이 시나리오는 실제 기업이 보낸 요청이 아니며, 동봉 이미지는 캠페인 검토용 예시입니다. 실제 광고·외부 공개에 사용하기 전 상표, 상품 이미지, 콘텐츠 이용 권한을 별도로 확인하세요.
 
-### 6.3 메일 상단의 네 가지 버튼
+### 7.3 메일 상단의 네 가지 버튼
 
 1. **Summary**: 선택한 샘플의 상품, 캠페인 목적, 채널 등 요청 요약을 확인합니다.
 2. **Draft reply**: 답변 초안을 검토·수정하고 저장합니다. **메일을 보내지 않습니다.**
@@ -195,9 +308,9 @@ location.reload();
 
 요구사항 변경 후 이전 캠페인 초안이 오래된 상태로 표시되면 현재 요구사항으로 다시 저장하세요. 네 버튼은 인식 가능한 샘플 캠페인 메일에서 표시됩니다. 일반 메일에 같은 AI 결과가 자동 생성된다고 기대하면 안 됩니다.
 
-## 7. Replit 운영 빌드와 게시
+## 8. Replit 운영 빌드와 게시
 
-### 7.1 운영 명령
+### 8.1 운영 명령
 
 저장소 최상위 기준:
 
@@ -215,7 +328,7 @@ bash github-version/scripts/start-production.sh
 
 운영 로그인은 HTTPS와 Secure 쿠키를 전제로 합니다. 평문 `http://localhost`로 운영 로그인을 시험하고 정상 배포와 같다고 판단하지 마세요.
 
-### 7.2 Publishing 설정
+### 8.2 Publishing 설정
 
 | 설정 | 값 |
 |---|---|
@@ -232,7 +345,7 @@ bash github-version/scripts/start-production.sh
 
 배포 지역 선택이 제공된다면 첫 게시 전에 확인하세요. 지역은 첫 게시 후 변경할 수 없는 설정입니다. 실제 Publish 동작은 소유자가 수행해야 합니다.
 
-### 7.3 포트 설정과 현재 알려진 문제
+### 8.3 포트 설정과 현재 알려진 문제
 
 패키지의 `.replit`은 다음 상태로 구성했습니다.
 
@@ -257,7 +370,7 @@ exposeLocalhost = false
 
 문제가 재현되면 같은 파일 수정과 재시작을 반복하지 마세요. 설정 파일의 값과 Networking 화면의 실제 연결 상태를 구분해야 합니다.
 
-### 7.4 게시 후 확인
+### 8.4 게시 후 확인
 
 - `/health`, `/ready`가 응답하고 DB 연결 상태가 정상인지 확인합니다.
 - 로그아웃 상태에서 `/`는 로그인 화면을, `/api/v1/mailboxes`는 `401`을 반환해야 합니다.
@@ -268,7 +381,7 @@ exposeLocalhost = false
 
 `/`가 `200`이라는 사실만으로 로그인 설정이나 모든 기능이 준비됐다고 판단하지 마세요. 관리자 비밀번호가 없거나 길이가 맞지 않아도 안내 페이지는 표시되며 메일 API는 잠깁니다.
 
-## 8. 운영·보안 설명서
+## 9. 운영·보안 설명서
 
 ### 로그인과 접근
 
@@ -304,7 +417,7 @@ exposeLocalhost = false
 
 로그에는 비밀번호, 연결 문자열, 세션 토큰을 남기지 마세요. 수정 후에는 해당 환경을 다시 실행/게시하고 실제 로그인·저장 경로를 확인하세요.
 
-## 9. 테스트와 파일 검증
+## 10. 테스트와 파일 검증
 
 ```bash
 # 저장소 최상위에서 실행
@@ -322,7 +435,7 @@ GitHub Actions는 Mail Server 테스트와 Replit 운영 빌드를 수행합니�
 
 `VALIDATION.md`에는 이 묶음에서 실제 수행한 검사와 검증하지 못한 항목을 구분해 기록했습니다. 소스를 수정한 뒤에는 최초 배포의 체크섬과 달라지는 것이 정상입니다.
 
-## 10. 원본 코드·라이선스·참고 문서
+## 11. 원본 코드·라이선스·참고 문서
 
 - 기존 프로젝트 설명: [`github-version/README.md`](github-version/README.md)
 - 기존 개발 문서: [`github-version/DEVELOPMENT.md`](github-version/DEVELOPMENT.md)
