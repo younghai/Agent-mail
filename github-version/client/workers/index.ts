@@ -21,6 +21,8 @@ import { Folders } from "../shared/folders";
 import type { Env } from "./types";
 import { recordFeedbackEvent } from "./lib/observability/analytics.ts";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
+import { registerCampaignDemoRoutes } from "./lib/campaign-demo-routes";
+import { adminActor } from "./lib/access";
 import type {
 	AdminActor,
 	AdminClient,
@@ -37,7 +39,7 @@ type AppContext = Context<MailboxContext>;
 const CreateMailboxBody = z.object({
 	email: z.string().email(),
 	name: z.string().min(1),
-	settings: z.record(z.any()).optional(), // unvalidated — agentSystemPrompt goes straight to AI
+settings: z.record(z.string(), z.any()).optional(), // unvalidated — agentSystemPrompt goes straight to AI
 });
 
 const DraftBody = z.object({
@@ -186,27 +188,8 @@ async function resolveClientForEmail(
 	return await admin.createClient(input, actor) as AdminClient;
 }
 
-function isLocalDevRequest(c: AppContext) {
-	const url = new URL(c.req.url);
-	return import.meta.env.DEV || url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1";
-}
-
 function getAdminActor(c: AppContext): AdminActor {
-	const isLocal = isLocalDevRequest(c);
-	const email =
-		c.req.header("cf-access-authenticated-user-email") ||
-		c.req.header("x-admin-user-email") ||
-		(isLocal ? "local-admin@example.local" : "");
-	const configuredAdmins = (c.env.ADMIN_EMAILS || "")
-		.split(",")
-		.map((item) => item.trim().toLowerCase())
-		.filter(Boolean);
-	const role: AdminRole = configuredAdmins.length === 0 && isLocal
-		? "admin"
-		: configuredAdmins.includes(email.toLowerCase())
-			? "admin"
-			: "viewer";
-	return { email, role };
+	return adminActor(c.get("accessIdentity"), c.env.ADMIN_EMAILS || "");
 }
 
 function requireAdminRole(c: AppContext, roles: AdminRole[]) {
@@ -235,6 +218,7 @@ app.use("/api/*", cors({
 	},
 }));
 app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
+registerCampaignDemoRoutes(app);
 
 // -- Config ---------------------------------------------------------
 

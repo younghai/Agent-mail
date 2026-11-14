@@ -1,4 +1,5 @@
 import express from 'express';
+import { fileURLToPath } from 'node:url';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
 import { initDb, query, pool } from './db.js';
@@ -13,6 +14,9 @@ import {
   IS_LOCAL_ENV,
   LOCAL_SERVICE_TOKEN,
   NODE_ENV,
+  TEAM_DOMAIN,
+  POLICY_AUD,
+  REPLIT_WEB_ENABLED,
   WEBHOOK_SECRET,
   assertProductionConfig,
 } from './config.js';
@@ -21,6 +25,7 @@ import { createInboundSmtpServer } from './lib/inbound-smtp.js';
 import { sendEmail } from './lib/outbound-smtp.js';
 import { upsertInboundEmail } from './lib/inbound-email.js';
 import { registerCompatRoutes } from './routes/compat.js';
+import { registerCampaignDemoRoutes } from './routes/campaign-demo.js';
 import {
   assertPlainObject,
   getBoundedPagination,
@@ -36,13 +41,23 @@ import {
   wrapAsyncRoutes,
 } from './lib/http.js';
 import { serializeFolder, serializeMailbox } from './lib/ui-compat.js';
+import { createAdminAuth, requireAdminRole } from './lib/admin-auth.js';
+import { createSessionStore, registerProductionWeb } from './lib/production-web.js';
 
 const app = express();
 
 wrapAsyncRoutes(app);
 assertProductionConfig();
 
-app.use(cors({
+if (REPLIT_WEB_ENABLED) {
+  registerProductionWeb(app, {
+    store: createSessionStore(query),
+    clientDir: fileURLToPath(new URL('../../client/build-replit/client/', import.meta.url)),
+    password: process.env.INBOX_ADMIN_PASSWORD,
+    sessionSecret: process.env.SESSION_SECRET,
+  });
+}
+if (!REPLIT_WEB_ENABLED) app.use(cors({
   origin(origin, callback) {
     if (!origin || CORS_ORIGINS.includes(origin)) return callback(null, true);
     return callback(new Error('CORS origin not allowed'));
@@ -89,29 +104,6 @@ app.param('mailboxId', async (req, res, next, mailboxId) => {
     next(e);
   }
 });
-
-function getAdminActor(req) {
-  const accessEmail = req.get('cf-access-authenticated-user-email') || req.get('x-authenticated-user-email') || '';
-  const localEmail = IS_LOCAL_ENV ? req.get('x-admin-user-email') || 'local-admin@example.local' : '';
-  const email = accessEmail || localEmail;
-  const normalizedEmail = email.toLowerCase();
-  const allowed = ADMIN_EMAILS.map((item) => item.toLowerCase());
-  const role = (IS_LOCAL_ENV && allowed.length === 0) || allowed.includes(normalizedEmail) ? 'admin' : 'viewer';
-  return { email, role };
-}
-
-function requireAdminRole(req, res, roles) {
-  const actor = getAdminActor(req);
-  if (!actor.email) {
-    sendError(res, 403, 'Admin identity is required');
-    return null;
-  }
-  if (!roles.includes(actor.role)) {
-    sendError(res, 403, 'Admin role required');
-    return null;
-  }
-  return actor;
-}
 
 function taskToApi(row) {
   return {
@@ -240,8 +232,21 @@ async function audit(entityType, entityId, action, actor, before, after) {
   );
 }
 
-app.use(requireLocalToken);
+if (!REPLIT_WEB_ENABLED) {
+  app.use(requireLocalToken);
+  app.use(createAdminAuth({
+    isLocal: IS_LOCAL_ENV,
+    teamDomain: TEAM_DOMAIN,
+    policyAud: POLICY_AUD,
+    adminEmails: ADMIN_EMAILS,
+  }));
+}
+// Also cover admin compatibility/report routes registered below.
+app.use('/api/v1/admin', (req, res, next) => {
+  if (requireAdminRole(req, res, ['admin', 'manager', 'operator', 'viewer'])) next();
+});
 registerCompatRoutes(app, { query, uuidv4, sendEmail, sendError });
+registerCampaignDemoRoutes(app, { query, pool });
 
 // ---------- Config ----------
 app.get('/api/v1/config', async (req, res) => {
@@ -1225,9 +1230,9 @@ app.get('/health', async (req, res) => {
 app.get('/ready', async (req, res) => {
   try {
     await query('SELECT 1');
-    res.json({ status: 'ready', checks: { database: 'ok', auth: LOCAL_SERVICE_TOKEN ? 'token_required' : 'development_open' } });
+    res.json({ status: 'ready', checks: { database: 'ok', auth: REPLIT_WEB_ENABLED ? 'session_required' : LOCAL_SERVICE_TOKEN ? 'token_required' : 'development_open' } });
   } catch (e) {
-    res.status(500).json({ status: 'not_ready', error: e.message });
+    res.status(500).json({ status: 'not_ready', error: NODE_ENV === 'production' ? 'Database unavailable' : e.message });
   }
 });
 
@@ -1235,7 +1240,8 @@ app.get('/ready', async (req, res) => {
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, _next) => {
   const status = err.status || err.statusCode || 500;
-  const message = NODE_ENV === 'production' ? 'Internal server error' : (err.message || 'Unknown error');
+  const message = err.code === 'STORAGE_NOT_CONFIGURED' ? '첨부파일용 영구 저장소가 아직 연결되지 않았습니다.' :
+    NODE_ENV === 'production' ? 'Internal server error' : (err.message || 'Unknown error');
   console.error(`[${req.method}] ${req.path} →`, err);
   res.status(status).json({ success: false, error: { code: err.code || 'INTERNAL_ERROR', message } });
 });
@@ -1248,7 +1254,7 @@ const PORT = process.env.PORT || 8080;
 
 async function main() {
   await initDb();
-  app.listen(PORT, () => {
+  app.listen(PORT, process.env.HOST || '0.0.0.0', () => {
     console.log(`Mail Server listening on port ${PORT}`);
   });
 
@@ -1262,4 +1268,7 @@ async function main() {
   }
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error('Mail server startup failed:', error.message);
+  process.exit(1);
+});

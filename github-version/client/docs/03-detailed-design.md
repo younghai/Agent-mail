@@ -3,7 +3,7 @@
 ## API 명세
 
 ### 인증
-- 프로덕션: Cloudflare Access JWT (`cf-access-authenticated-user-email` 헤더)
+- 프로덕션: `cf-access-jwt-assertion`의 서명·issuer·audience·만료를 검증하고 JWT의 `email`로 사용자 식별 (이메일 헤더는 신뢰하지 않음)
 - 개발: `import.meta.env.DEV` 시 Access 스킵
 
 ### 주요 엔드포인트

@@ -97,6 +97,12 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 				setTimeout(reportHeight, 50);
 				setTimeout(reportHeight, 150);
 				setTimeout(reportHeight, 400);
+				window.addEventListener("load", reportHeight);
+				document.querySelectorAll("img").forEach(function(image) {
+					image.addEventListener("load", reportHeight);
+					image.addEventListener("error", reportHeight);
+				});
+				new ResizeObserver(reportHeight).observe(document.body);
 			<\/script>`
 			: "";
 
@@ -107,7 +113,7 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https: ${window.location.origin}; script-src 'unsafe-inline';">
 <style>
 * { box-sizing: border-box; }
 html {

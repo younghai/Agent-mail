@@ -46,6 +46,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createMiddleware } from "hono/factory";
 import { z } from "zod";
+import { adminActor, type AccessIdentity } from "../workers/lib/access.ts";
 
 // ---------------------------------------------------------------------------
 // Types (minimal inline to avoid importing CF-specific modules)
@@ -244,6 +245,7 @@ interface MockEnvOptions {
 	adminStubCfg?: AdminStubConfig;
 	r2?: MockR2;
 	adminEmails?: string;
+	verifiedEmail?: string;
 	domains?: string;
 }
 
@@ -260,6 +262,9 @@ function createMockEnv(opts: MockEnvOptions = {}) {
 		DOMAINS: opts.domains ?? "example.com",
 		EMAIL_ADDRESSES: [] as string[],
 		ADMIN_EMAILS: opts.adminEmails ?? "admin@example.com",
+		// This fixture represents identity already verified by upstream middleware.
+		// Real signed-JWT coverage lives in integration/admin-identity.spec.ts.
+		verifiedEmail: opts.verifiedEmail ?? "admin@example.com",
 		POLICY_AUD: "",
 		TEAM_DOMAIN: "",
 	};
@@ -300,7 +305,7 @@ function boolQuery(c: { req: { query(k: string): string | undefined } }, key: st
 const CreateMailboxBody = z.object({
 	email: z.string().email(),
 	name: z.string().min(1),
-	settings: z.record(z.any()).optional(),
+settings: z.record(z.string(), z.any()).optional(),
 });
 
 const DraftBody = z.object({
@@ -355,20 +360,6 @@ async function listMailboxes(bucket: MockR2) {
 	});
 }
 
-function getAdminActor(env: Env, headers: { get(k: string): string | null }): AdminActor {
-	const email =
-		headers.get("cf-access-authenticated-user-email") ||
-		headers.get("x-admin-user-email") ||
-		"";
-	const configuredAdmins = (env.ADMIN_EMAILS || "")
-		.split(",")
-		.map((item) => item.trim().toLowerCase())
-		.filter(Boolean);
-	const role: AdminRole =
-		configuredAdmins.includes(email.toLowerCase()) ? "admin" : "viewer";
-	return { email, role };
-}
-
 function buildApp(env: Env) {
 	const app = new Hono<MailboxContext>();
 
@@ -402,10 +393,10 @@ function buildApp(env: Env) {
 		return env.ADMIN.get();
 	}
 
-		function requireAdminRole(c: { req: { header(k: string): string | undefined } }, roles: AdminRole[]) {
-			const actor = getAdminActor(env, {
-				get: (k: string) => c.req.header(k) ?? null,
-		});
+		function requireAdminRole(_c: unknown, roles: AdminRole[]) {
+			const identity: AccessIdentity | undefined = env.verifiedEmail
+				? { email: env.verifiedEmail, local: false } : undefined;
+			const actor = adminActor(identity, env.ADMIN_EMAILS);
 		if (!actor.email) return { error: "Admin identity is required", status: 403 as const };
 		if (!roles.includes(actor.role)) return { error: "Admin role required", status: 403 as const };
 			return actor;
@@ -769,8 +760,8 @@ async function req(
 	return await app.fetch(new Request(`http://localhost${path}`, init));
 }
 
-// Admin header helper
-const adminHeaders = { "x-admin-user-email": "admin@example.com" };
+// Identity comes from the verified-email fixture, never from HTTP headers.
+const adminHeaders = {};
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -1082,9 +1073,9 @@ test("GET .../attachments/:id returns 404 when R2 object missing", async () => {
 	assert.equal(res.status, 404);
 });
 
-// 26. GET /api/v1/admin/clients — no auth header → 403
-test("GET /api/v1/admin/clients returns 403 when no admin identity header", async () => {
-	const app = buildApp(createMockEnv({ adminEmails: "admin@example.com" }));
+// 26. GET /api/v1/admin/clients — no verified identity → 403
+test("GET /api/v1/admin/clients returns 403 when no verified identity", async () => {
+const app = buildApp(createMockEnv({ adminEmails: "admin@example.com", verifiedEmail: "" }));
 	const res = await req(app, "GET", "/api/v1/admin/clients");
 	assert.equal(res.status, 403);
 });
@@ -1117,10 +1108,10 @@ test("POST /api/v1/admin/clients creates client for admin user", async () => {
 // 29. POST /api/v1/admin/clients — non-admin viewer cannot create (403)
 test("POST /api/v1/admin/clients returns 403 for viewer role", async () => {
 	// viewer = email not in ADMIN_EMAILS
-	const app = buildApp(createMockEnv({ adminEmails: "admin@example.com" }));
+const app = buildApp(createMockEnv({ adminEmails: "admin@example.com", verifiedEmail: "viewer@example.com" }));
 	const res = await req(app, "POST", "/api/v1/admin/clients", {
 		body: { name: "X", company: "X Ltd", status: "active", tags: [] },
-		headers: { "x-admin-user-email": "viewer@example.com" },
+headers: { "x-admin-user-email": "admin@example.com" },
 	});
 	assert.equal(res.status, 403);
 });

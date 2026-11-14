@@ -2,8 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-// @cloudflare/vitest-pool-workers v0.16.x — uses cloudflareTest plugin API
-// (no /config subpath in this version; defineWorkersConfig is not available)
+// The Workers pool uses the cloudflareTest plugin API.
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 

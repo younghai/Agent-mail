@@ -10,10 +10,11 @@
 import { createMiddleware } from "hono/factory";
 import type { MailboxDO } from "../durableObject";
 import type { Env } from "../types";
+import type { AccessContext } from "./access";
 
 export type MailboxContext = {
 	Bindings: Env;
-	Variables: {
+Variables: AccessContext["Variables"] & {
 		mailboxStub: DurableObjectStub<MailboxDO>;
 	};
 };

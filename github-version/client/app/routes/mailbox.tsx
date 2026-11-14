@@ -52,7 +52,7 @@ export default function MailboxRoute() {
 	}
 
 	return (
-		<div className="flex h-screen overflow-hidden">
+<div className="flex h-[100dvh] overflow-hidden">
 			{/* Mobile sidebar overlay backdrop */}
 			{isSidebarOpen && (
 				<div
@@ -67,8 +67,8 @@ export default function MailboxRoute() {
 
 			{/* Sidebar: hidden on mobile by default, shown as overlay when open */}
 			<div
-				className={`fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-200 ease-in-out md:relative md:translate-x-0 md:z-0 ${
-					isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+className={`fixed inset-y-0 left-0 z-40 w-64 md:relative md:block md:z-0 ${
+isSidebarOpen ? "block" : "hidden"
 				}`}
 			>
 				<Sidebar />
@@ -77,7 +77,7 @@ export default function MailboxRoute() {
 			{/* Main content */}
 			<div className="flex-1 flex flex-col min-w-0 bg-kumo-base">
 				<Header />
-				<main className="flex-1 overflow-hidden">
+<main className="min-h-0 flex-1 overflow-hidden">
 					<Outlet />
 				</main>
 			</div>

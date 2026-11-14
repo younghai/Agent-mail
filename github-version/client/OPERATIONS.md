@@ -70,12 +70,14 @@ npx wrangler tail
 
 - 프로덕션에서는 Cloudflare Access를 통해 모든 요청이 JWT로 보호됨
 - `import.meta.env.DEV`가 아닌 경우, `POLICY_AUD`와 `TEAM_DOMAIN` secrets가 필수
+- 개발 모드도 Access 설정이 있으면 JWT를 검증하며, localhost URL만으로 검증을 건너뛰지 않음
 - `.dev.vars`는 개발자 로컬에만 존재하도록 Git 제외 확인
 
 ### 4.2 RBAC
 
 - `ADMIN_EMAILS` wrangler var에 콤마로 구분된 관리자 이메일 등록
-- API는 `cf-access-authenticated-user-email` 헤더를 기반으로 역할 검증
+- API는 서명·issuer·audience·만료가 검증된 Access JWT의 `email`만 사용해 역할을 검증
+- 이메일 식별 헤더(`cf-access-authenticated-user-email`, `x-admin-user-email` 등)는 역할이나 감사 기록에 사용하지 않음
 - 역할: `admin`, `manager`, `operator`, `viewer`
 
 ### 4.3 프롬프트 인젝션 방지

@@ -1,0 +1,57 @@
+name: Replit production checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.32.1 --activate
+
+      - name: Reject tracked private and generated files
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import PurePosixPath
+          import subprocess
+          files = subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\0")
+          forbidden = {".runtime", ".pythonlibs", ".venv", "node_modules", ".pnpm-store", ".agents", ".local"}
+          bad = []
+          for name in filter(None, files):
+              p = PurePosixPath(name)
+              private = (p.name == ".env" or p.name.startswith(".env.") or p.name == ".dev.vars" or p.name.startswith(".dev.vars.")) and not p.name.endswith(".example")
+              if forbidden.intersection(p.parts) or private or p.suffix in {".pem", ".key", ".p12", ".pfx", ".db", ".sqlite", ".sqlite3"}:
+                  bad.append(name)
+          if bad:
+              raise SystemExit("Do not commit these files:\n" + "\n".join(bad))
+          PY
+
+      - name: Install fixed dependencies
+        run: pnpm --dir github-version install --frozen-lockfile
+
+      - name: Test Mail Server
+        run: pnpm --dir github-version test
+
+      - name: Check production scripts
+        run: bash -n github-version/scripts/build-replit.sh github-version/scripts/start-production.sh
+
+      - name: Build Replit production client
+        run: bash github-version/scripts/build-replit.sh

@@ -295,6 +295,11 @@ export default function Sidebar() {
 						label="SLA"
 						onClick={handleNavClick}
 					/>
+{import.meta.env.VITE_REPLIT_PRODUCTION === "true" && (
+<a href="/auth/logout" className="block rounded-md px-3 py-2 text-sm text-kumo-subtle hover:bg-kumo-tint">
+로그아웃
+</a>
+)}
 				</div>
 			</nav>
 

@@ -58,10 +58,10 @@ function readMailboxes(payload: MailboxListResponse) {
 	return Array.isArray(payload.data) ? payload.data : [];
 }
 
-export async function loader() {
+export async function clientLoader() {
 	try {
 		const baseUrl = typeof window === "undefined" ? import.meta.env.VITE_API_BASE_URL || "http://localhost:5174" : "";
-		const localServiceToken = import.meta.env.VITE_LOCAL_SERVICE_TOKEN || "";
+const localServiceToken = import.meta.env.VITE_LOCAL_SERVICE_TOKEN || "";
 		const headers = localServiceToken
 			? { Authorization: `Bearer ${localServiceToken}` }
 			: undefined;

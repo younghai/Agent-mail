@@ -1,1 +1,0 @@
-const a={mailboxes:{all:["mailboxes"],detail:s=>["mailboxes",s]},emails:{list:(s,e)=>["emails",s,e],detail:(s,e)=>["emails",s,e],thread:(s,e)=>["emails",s,"thread",e]},folders:{list:s=>["folders",s]},templates:{list:s=>["templates",s]},search:{results:(s,e,l)=>["search",s,e,l]},config:["config"],segments:{list:s=>["segments",s]},sla:{metrics:(s,e)=>["sla",s,e]}};export{a as q};

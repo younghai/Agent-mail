@@ -1,0 +1,62 @@
+modules = ["python-3.12", "web", "nodejs-22"]
+
+[nix]
+channel = "stable-25_05"
+packages = ["cacert", "libxcrypt", "minio", "postgresql", "redis"]
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Agent Mail"
+
+[[workflows.workflow]]
+name = "Agent Mail"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash github-version/scripts/start-replit.sh"
+waitForPort = 5000
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 5174
+exposeLocalhost = false
+
+[[ports]]
+localPort = 5100
+exposeLocalhost = false
+
+[[ports]]
+localPort = 6379
+exposeLocalhost = false
+
+[[ports]]
+localPort = 9000
+exposeLocalhost = false
+
+[[ports]]
+localPort = 9001
+exposeLocalhost = false
+
+[postMerge]
+path = "github-version/scripts/post-merge.sh"
+timeoutMs = 180000
+
+[deployment]
+deploymentTarget = "autoscale"
+run = ["bash", "github-version/scripts/start-production.sh"]
+build = ["bash", "github-version/scripts/build-replit.sh"]

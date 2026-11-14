@@ -6,9 +6,10 @@ import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
+import { stripIdentityHeaders } from "./proxy-auth";
 
 const apiBaseUrl = process.env.VITE_API_BASE_URL || "http://localhost:5174";
-const localServiceToken = process.env.VITE_LOCAL_SERVICE_TOKEN || "local-dev-token-change-me";
+const localServiceToken = process.env.LOCAL_SERVICE_TOKEN || process.env.VITE_LOCAL_SERVICE_TOKEN || "local-dev-token-change-me";
 const clientPort = Number.parseInt(process.env.CLIENT_PORT || "5000", 10);
 
 export default defineConfig({
@@ -19,26 +20,31 @@ export default defineConfig({
 		include: ["react", "react-dom", "react-router"],
 	},
 	define: {
-		"import.meta.env.VITE_LOCAL_SERVICE_TOKEN": JSON.stringify(localServiceToken),
+"import.meta.env.VITE_LOCAL_SERVICE_TOKEN": JSON.stringify(process.env.REPLIT_DEV_DOMAIN ? "" : localServiceToken),
 		"import.meta.env.VITE_API_BASE_URL": JSON.stringify(apiBaseUrl),
 	},
 	server: {
 		host: "0.0.0.0",
 		port: clientPort,
+allowedHosts: process.env.REPLIT_DEV_DOMAIN ? [process.env.REPLIT_DEV_DOMAIN] : [],
 		proxy: {
 			"/api": {
+				configure: stripIdentityHeaders,
 				target: apiBaseUrl,
 				changeOrigin: true,
 				headers: {
 					Authorization: `Bearer ${localServiceToken}`,
+Origin: `http://localhost:${clientPort}`,
 				},
 			},
 			"/agents": {
+				configure: stripIdentityHeaders,
 				target: apiBaseUrl,
 				ws: true,
 				changeOrigin: true,
 				headers: {
 					Authorization: `Bearer ${localServiceToken}`,
+Origin: `http://localhost:${clientPort}`,
 				},
 			},
 		},
@@ -48,18 +54,22 @@ export default defineConfig({
 		port: clientPort,
 		proxy: {
 			"/api": {
+				configure: stripIdentityHeaders,
 				target: apiBaseUrl,
 				changeOrigin: true,
 				headers: {
 					Authorization: `Bearer ${localServiceToken}`,
+Origin: `http://localhost:${clientPort}`,
 				},
 			},
 			"/agents": {
+				configure: stripIdentityHeaders,
 				target: apiBaseUrl,
 				ws: true,
 				changeOrigin: true,
 				headers: {
 					Authorization: `Bearer ${localServiceToken}`,
+Origin: `http://localhost:${clientPort}`,
 				},
 			},
 		},

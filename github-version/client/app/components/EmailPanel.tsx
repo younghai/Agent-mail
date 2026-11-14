@@ -12,6 +12,8 @@ import AgentSurface from "~/components/AgentSurface";
 import EmailPanelDialogs from "~/components/email-panel/EmailPanelDialogs";
 import EmailPanelHeader from "~/components/email-panel/EmailPanelHeader";
 import EmailPanelToolbar from "~/components/email-panel/EmailPanelToolbar";
+import CampaignActions from "~/components/email-panel/CampaignActions";
+import { findDemo } from "../../shared/campaign-demo.js";
 import SingleMessageView from "~/components/email-panel/SingleMessageView";
 import ThreadMessage from "~/components/email-panel/ThreadMessage";
 import { splitEmailList, toEmailListValue } from "~/lib/utils";
@@ -366,7 +368,10 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 	// Reset expanded state only when the selected email changes, not on every refetch.
 	// Using allMessages as a dependency would reset user expand/collapse state on background refetches.
 	const currentEmailId = email?.id;
-	useEffect(() => { if (allMessages.length > 1) setExpandedMessages(new Set([allMessages[0].id])); }, [currentEmailId]); // eslint-disable-line react-hooks/exhaustive-deps
+useEffect(() => {
+if (email && findDemo(email)) setExpandedMessages(new Set([email.id]));
+else if (allMessages.length > 1) setExpandedMessages(new Set([allMessages[0].id]));
+}, [currentEmailId]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	const toggleExpand = (msgId: string) => { setExpandedMessages((prev) => { const next = new Set(prev); if (next.has(msgId)) next.delete(msgId); else next.add(msgId); return next; }); };
 
@@ -499,9 +504,10 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 
 	const hasThread = allMessages.length > 1;
 	const draftCount = draftMessageIds.size;
+	const isDemo = Boolean(findDemo(email));
 
 	return (
-		<div className="flex flex-col h-full">
+		<div className="flex min-h-0 min-w-0 flex-col h-full [&>div:first-child]:flex-wrap md:[&>div:first-child]:flex-nowrap">
 			<EmailPanelToolbar
 				email={email}
 				mailboxId={mailboxId}
@@ -538,7 +544,7 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 				onSetAgentPlacement={setAgentResultPlacement}
 			/>
 
-			<EmailAgentActionBar
+			{!isDemo && <EmailAgentActionBar
 				subject={email.subject}
 				messageCount={allMessages.length}
 				draftCount={draftCount}
@@ -549,7 +555,7 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 				onCreateTask={handleCreateTaskFromEmail}
 				onDraftReply={handleAiDraftReply}
 				onSetAgentPlacement={setAgentResultPlacement}
-			/>
+			/>}
 
 			<EmailPanelHeader
 				subject={email.subject}
@@ -557,7 +563,8 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 				showThreadCount={hasThread}
 			/>
 
-			<div className="flex-1 overflow-y-auto">
+			<div className="min-h-0 flex-1 overflow-y-auto">
+				{isDemo && mailboxId && <CampaignActions key={email.id} mailboxId={mailboxId} emailId={email.id} threadId={email.thread_id} />}
 				{hasThread ? (
 					allMessages.map((msg, idx) => {
 						const isDraft = draftMessageIds.has(msg.id);
@@ -593,7 +600,7 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 						}
 					/>
 				)}
-				{agentResultPlacement === "below" && (
+				{!isDemo && agentResultPlacement === "below" && (
 					<div ref={agentResultsRef}>
 						<EmailAgentResults
 							email={email}

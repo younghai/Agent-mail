@@ -8,6 +8,11 @@ import { eq, and, or, asc, desc, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "../db/schema";
 import { Folders } from "../../shared/folders";
+import {
+DEMO_CAMPAIGNS, demoEmailHtml, escapeHtml, stableDemoId, findDemo,
+buildWorkspace, validateRequirements, validateReply, makeCampaign, normalizedOverrides,
+} from "../../shared/campaign-demo.js";
+import type { WorkspaceStore } from "../../shared/campaign-demo.js";
 import type { Env } from "../types";
 import { applyMigrations, mailboxMigrations } from "./migrations";
 import {
@@ -134,6 +139,97 @@ export class MailboxDO extends DurableObject<Env> {
 	}
 
 	// ── Email CRUD (Drizzle) ───────────────────────────────────────
+
+async seedDemoCampaigns(mailboxEmail: string, refreshContent = false) {
+const inbox = this.db.select().from(schema.folders).where(eq(schema.folders.id, Folders.INBOX)).get();
+if (!inbox) throw new Error("Inbox folder not found");
+let created = 0;
+let refreshed = 0;
+for (const [index, fixture] of DEMO_CAMPAIGNS.entries()) {
+const id = await stableDemoId(mailboxEmail.toLowerCase(), fixture.key);
+const existing = this.db.select().from(schema.emails).where(eq(schema.emails.id, id)).get();
+if (existing) {
+if (refreshContent && findDemo(existing)) {
+this.db.update(schema.emails).set({
+body: demoEmailHtml(fixture),
+}).where(eq(schema.emails.id, id)).run();
+refreshed++;
+}
+continue;
+}
+this.db.insert(schema.emails).values({
+id, folder_id: Folders.INBOX, subject: fixture.subject, sender: fixture.sender,
+recipient: mailboxEmail.toLowerCase(), date: new Date(Date.now() - index * 30 * 60000).toISOString(),
+body: demoEmailHtml(fixture),
+thread_id: id, message_id: `<${id}@campaign-demo.invalid>`, read: 0, starred: 0,
+}).run();
+created++;
+}
+return { created, total: DEMO_CAMPAIGNS.length, ...(refreshContent ? { refreshed } : {}) };
+}
+
+async getDemoCampaignWorkspace(emailId: string) {
+const email = await this.getEmail(emailId);
+if (!email) return { ok: false as const, status: 404 as const, error: "메일을 찾을 수 없습니다." };
+if (!findDemo(email)) return { ok: false as const, status: 422 as const, error: "이 기능은 가상 캠페인 메일용 데모입니다. 실제 메일 AI 분석은 별도로 연결해야 합니다." };
+const state = await this.ctx.storage.get<WorkspaceStore>(`campaign-demo:${emailId}`);
+return { ok: true as const, workspace: buildWorkspace(email, state || {}) };
+}
+
+async mutateDemoCampaignWorkspace(
+emailId: string, mailboxEmail: string, operation: "requirements" | "reply" | "campaign",
+input: { requirements?: unknown; title?: string; notes?: string; subject?: string; body?: string },
+) {
+const email = await this.getEmail(emailId);
+if (!email) return { ok: false as const, status: 404 as const, error: "메일을 찾을 수 없습니다." };
+const fixture = findDemo(email);
+if (!fixture) return { ok: false as const, status: 422 as const, error: "이 기능은 가상 캠페인 메일용 데모입니다. 실제 메일 AI 분석은 별도로 연결해야 합니다." };
+let values: Record<string, string> = {};
+let reply: { subject: string; body: string } | undefined;
+try {
+if (operation === "reply") reply = validateReply(input);
+else values = validateRequirements(input?.requirements);
+} catch (error) {
+return { ok: false as const, status: 400 as const, error: (error as Error).message };
+}
+const draftId = await stableDemoId(mailboxEmail.toLowerCase(), `${emailId}:${operation}`);
+return this.ctx.storage.transaction(async (storage) => {
+const key = `campaign-demo:${emailId}`;
+const state = await storage.get<WorkspaceStore>(key) || {};
+if (operation !== "reply") {
+try { state.requirements = normalizedOverrides(fixture, values); }
+catch (error) {
+return { ok: false as const, status: 400 as const, error: (error as Error).message };
+}
+}
+if (operation === "campaign") {
+try {
+state.campaign = makeCampaign(buildWorkspace(email, state), { title: input.title!, notes: input.notes }, state.campaign, draftId);
+} catch (error) {
+return { ok: false as const, status: 400 as const, error: (error as Error).message };
+}
+}
+if (reply) {
+const previous = this.db.select().from(schema.emails).where(eq(schema.emails.id, draftId)).get();
+if (previous && (previous.folder_id !== Folders.DRAFT || previous.in_reply_to !== emailId)) {
+return { ok: false as const, status: 400 as const, error: "기존 메일을 덮어쓸 수 없습니다." };
+}
+const body = `<div style="white-space:pre-wrap">${escapeHtml(reply.body)}</div>`;
+this.db.insert(schema.emails).values({
+id: draftId, folder_id: Folders.DRAFT, subject: reply.subject, sender: mailboxEmail.toLowerCase(),
+recipient: email.sender, date: new Date().toISOString(), body, in_reply_to: email.id,
+thread_id: email.thread_id || email.id, read: 1, starred: 0,
+}).onConflictDoUpdate({
+target: schema.emails.id, set: { subject: reply.subject, body },
+}).run();
+state.reply = reply;
+state.replyDraftId = draftId;
+}
+state.updatedAt = new Date().toISOString();
+await storage.put(key, state);
+return { ok: true as const, workspace: buildWorkspace(email, state) };
+});
+}
 
 	async getEmails(options: GetEmailsOptions = {}) {
 		const {

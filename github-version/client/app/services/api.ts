@@ -22,14 +22,16 @@ export class ApiError extends Error {
 	body: Record<string, unknown>;
 
 	constructor(status: number, body: Record<string, unknown>) {
-		super((body.error as string) || `Request failed: ${status}`);
+super(typeof body.error === "string" ? body.error :
+  (body.error && typeof body.error === "object" && "message" in body.error)
+    ? String(body.error.message) : `Request failed: ${status}`);
 		this.name = "ApiError";
 		this.status = status;
 		this.body = body;
 	}
 }
 
-async function request<T>(
+export async function request<T>(
 	url: string,
 	options: RequestInit = {},
 ): Promise<T> {
@@ -61,6 +63,9 @@ async function request<T>(
 
 		if (!res.ok) {
 			const body = await res.json().catch(() => ({}));
+if (res.status === 401 && body?.error?.code === "LOGIN_REQUIRED" && typeof window !== "undefined") {
+window.location.assign("/auth/login");
+}
 			throw new ApiError(res.status, body as Record<string, unknown>);
 		}
 

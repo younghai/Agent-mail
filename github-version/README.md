@@ -152,6 +152,7 @@ Update `.env` before real use:
 
 - `LOCAL_SERVICE_TOKEN`
 - `ADMIN_EMAILS`
+- `TEAM_DOMAIN` and `POLICY_AUD` (required for production administrator identity)
 - `APP_DOMAINS`
 - `WEBHOOK_SECRET`
 - `OPENAI_API_KEY`
@@ -168,6 +169,23 @@ Most API routes require:
 ```text
 Authorization: Bearer $LOCAL_SERVICE_TOKEN
 ```
+
+The service token authenticates the proxy/service, **not a user**. Production
+admin access also requires a signed Cloudflare Access JWT in
+`cf-access-jwt-assertion`. The mail server verifies its signature, issuer,
+audience, subject and expiration using `TEAM_DOMAIN` (the HTTPS Access team URL
+or certs URL) and `POLICY_AUD`. Only the verified JWT's email is compared with
+`ADMIN_EMAILS`; plain email identity headers are ignored and stripped by the
+standalone proxy. Forward the signed assertion from Access to the mail server.
+Missing user identity cannot read admin data or perform admin-only writes.
+Verified non-admin teammates retain the existing viewer permissions.
+
+Without Access configuration, local development uses the fixed identity
+`local-admin@example.local`; an empty admin allowlist grants that local identity
+admin access. Caller headers cannot select another local identity. Keep this
+development mode private and use `NODE_ENV=production` plus Access configuration
+for production. A production-built Worker no longer bypasses Access based on a
+localhost URL; use the development build for local-only access.
 
 Readiness routes are public:
 

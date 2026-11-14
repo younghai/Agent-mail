@@ -6,6 +6,7 @@ import type { Config } from "@react-router/dev/config";
 
 export default {
   ssr: process.env.STANDALONE !== "true",
+  buildDirectory: process.env.REPLIT_BUILD === "true" ? "build-replit" : "build",
   future: {
     v8_viteEnvironmentApi: true,
   },

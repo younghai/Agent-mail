@@ -4,7 +4,9 @@
 
 ### 인증
 - `Authorization: Bearer <LOCAL_SERVICE_TOKEN>`
-- `x-admin-user-email` / `cf-access-authenticated-user-email` (Admin RBAC)
+- Admin RBAC: `cf-access-jwt-assertion`의 서명·issuer·audience·만료 검증 후 JWT의 `email`을 `ADMIN_EMAILS`와 비교
+- `x-admin-user-email`, `x-authenticated-user-email`, `cf-access-authenticated-user-email`은 인증 근거로 사용하지 않음
+- 운영 Mail Server에는 `TEAM_DOMAIN`, `POLICY_AUD` 설정이 필요함
 
 ### 주요 엔드포인트
 
