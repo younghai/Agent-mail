@@ -35,6 +35,10 @@ async function fixture(t, options = {}) {
   app.get('/api/v1/mailboxes', (_req, res) => res.json({ actor: res.locals.adminActor }));
   app.post('/api/v1/mailboxes/:id/drafts', (_req, res) => res.json({ saved: true }));
   app.post('/api/v1/mailboxes/:id/emails/:emailId/campaign-workspace/reply', (_req, res) => res.json({ saved: true }));
+  // Mirrors the sending and AI routes the mail server defines.
+  for (const path of ['/api/v1/mailboxes/:id/emails/send', '/api/v1/mailboxes/:id/agent-feedback', '/api/v1/admin/agent-usage']) {
+    app.post(path, (_req, res) => res.json({ reached: true }));
+  }
   app.use((err, _req, res, _next) => res.status(503).json({ error: err.message }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
@@ -98,12 +102,17 @@ test('CSRF, sending, real AI and webhook paths are blocked without affecting cam
   assert.equal((await request('/api/v1/mailboxes/me/drafts', { method: 'POST', headers: { cookie } })).status, 403);
   assert.equal((await request('/auth/logout', { method: 'POST', headers: { cookie, origin: 'https://attacker.example' } })).status, 403);
   for (const path of [
-    '/api/v1/mailboxes/me/emails', '/api/v1/mailboxes/me/send',
+    '/api/v1/mailboxes/me/emails', '/api/v1/mailboxes/me/emails/send', '/API/v1/mailboxes/me/emails/send/',
     '/api/v1/mailboxes/me/emails/id/reply', '/api/v1/mailboxes/me/emails/id/forward',
   ]) assert.equal((await request(path, { method: 'POST', headers: { cookie, origin } })).status, 403);
-  for (const path of ['/api/v1/webhooks/email', '/api/v1/mailboxes/me/ai/draft', '/api/v1/mailboxes/me/test-autodraft']) {
+  for (const path of [
+    '/api/v1/webhooks/email', '/api/v1/mailboxes/me/ai/draft', '/api/v1/mailboxes/me/test-autodraft',
+    '/api/v1/mailboxes/me/agent-feedback', '/api/v1/admin/agent-usage',
+  ]) {
     assert.equal((await request(path, { method: 'POST', headers: { cookie, origin } })).status, 503);
   }
+  // Every other sending path is blocked, so the gate must not be a blanket match.
+  assert.equal((await request('/api/v1/mailboxes/me/emails/id/move', { method: 'POST', headers: { cookie, origin } })).status, 404);
 });
 
 test('missing or too-short password fails closed, including forged cookies', async t => {

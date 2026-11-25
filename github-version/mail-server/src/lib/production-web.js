@@ -134,13 +134,14 @@ export function registerProductionWeb(app, {
   app.get('/auth/logout', (_req, res) => res.type('html').send(loginPage({ configured, logout: true })));
   app.use((req, res, next) => {
     const path = req.path.toLowerCase();
+    // Every route that delivers mail: new send, SMTP send, reply, forward.
     if (req.method === 'POST' &&
-        /^\/api\/v1\/mailboxes\/[^/]+\/(?:send|emails|emails\/[^/]+\/(?:reply|forward))\/?$/.test(path)) {
+        /^\/api\/v1\/mailboxes\/[^/]+\/emails(?:\/(?:send|[^/]+\/(?:reply|forward)))?\/?$/.test(path)) {
       return res.status(403).json({ success: false, error: { code: 'SENDING_DISABLED', message: '메일 발송은 활성화되지 않았습니다. 초안으로 저장해 주세요.' } });
     }
     // The scenario-based campaign workspace stays available. Real AI/SMTP is
     // deliberately not started by this production launcher.
-    if (/^\/agents(?:\/|$)/.test(path) || /\/(?:ai|agent)(?:\/|$)/.test(path) ||
+    if (/^\/agents(?:\/|$)/.test(path) || /\/(?:ai|agent(?:-feedback|-usage)?)(?:\/|$)/.test(path) ||
         path.endsWith('/test-autodraft') || path.startsWith('/api/v1/webhooks/') || path.startsWith('/api/v1/inbound')) {
       return res.status(503).json({ success: false, error: { code: 'SERVICE_NOT_CONFIGURED', message: '이 운영 환경에는 실제 AI 및 메일 수신 서비스가 연결되지 않았습니다.' } });
     }
