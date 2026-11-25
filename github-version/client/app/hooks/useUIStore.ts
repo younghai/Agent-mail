@@ -41,11 +41,6 @@ interface UIState {
 	toggleAgentPanel: () => void;
 	setAgentResultPlacement: (placement: AgentResultPlacement) => void;
 
-	// Legacy dialog support (kept for non-split views)
-	isComposeModalOpen: boolean;
-	openComposeModal: (options?: ComposeOptions) => void;
-	closeComposeModal: () => void;
-
 	// Command palette (⌘K)
 	isCommandPaletteOpen: boolean;
 	openCommandPalette: () => void;
@@ -62,7 +57,6 @@ export const useUIStore = create<UIState>((set, get) => ({
 	isComposing: false,
 	_previousEmailId: null,
 	composeOptions: { mode: "new", originalEmail: null },
-	isComposeModalOpen: false,
 	isSidebarOpen: false,
 	isAgentPanelOpen: true,
 	agentResultPlacement: "below",
@@ -107,18 +101,6 @@ export const useUIStore = create<UIState>((set, get) => ({
 		set({
 			agentResultPlacement: placement,
 			isAgentPanelOpen: placement === "side",
-		}),
-
-	openComposeModal: (options) =>
-		set({
-			composeOptions: options || { mode: "new", originalEmail: null },
-			isComposeModalOpen: true,
-		}),
-
-	closeComposeModal: () =>
-		set({
-			isComposeModalOpen: false,
-			composeOptions: { mode: "new", originalEmail: null },
 		}),
 
 	isCommandPaletteOpen: false,

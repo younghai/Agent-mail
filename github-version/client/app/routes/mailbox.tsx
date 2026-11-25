@@ -3,9 +3,9 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { useEffect, useRef } from "react";
-import { Navigate, Outlet } from "react-router";
+import { Navigate, Outlet, useLocation } from "react-router";
 import AgentSidebar from "~/components/AgentSidebar";
-import ComposeEmail from "~/components/ComposeEmail";
+import ComposeDialog from "~/components/ComposeDialog";
 import Header from "~/components/Header";
 import Sidebar from "~/components/Sidebar";
 import { useMailbox, useMailboxes } from "~/queries/mailboxes";
@@ -20,14 +20,10 @@ export default function MailboxRoute() {
 	const { isError, error, isFetched } = useMailbox(mailboxId);
 	const { data: mailboxes = [] } = useMailboxes();
 	const prevMailboxIdRef = useRef<string | undefined>(undefined);
-	const {
-		isSidebarOpen,
-		closeSidebar,
-		isAgentPanelOpen,
-		agentResultPlacement,
-		closePanel,
-		closeComposeModal,
-	} = useUIStore();
+	const { isSidebarOpen, closeSidebar, isAgentPanelOpen, agentResultPlacement, closePanel } = useUIStore();
+	const location = useLocation();
+	// The email list and search views place the composer beside their content.
+	const composerInline = /\/(emails|search)(\/|$)/.test(location.pathname);
 
 	useEffect(() => {
 		if (
@@ -36,12 +32,11 @@ export default function MailboxRoute() {
 			prevMailboxIdRef.current !== mailboxSlug
 		) {
 			closePanel();
-			closeComposeModal();
 			closeSidebar();
 		}
 
 		prevMailboxIdRef.current = mailboxSlug;
-	}, [mailboxSlug, closeComposeModal, closePanel, closeSidebar]);
+	}, [mailboxSlug, closePanel, closeSidebar]);
 
 	// Redirect after all hooks — valid-looking but nonexistent mailboxId (e.g. old bookmark)
 	if (isFetched && isError && error instanceof ApiError && error.status === 404) {
@@ -90,7 +85,7 @@ isSidebarOpen ? "block" : "hidden"
 				</div>
 			)}
 
-			<ComposeEmail />
+			<ComposeDialog hidden={composerInline} />
 		</div>
 	);
 }

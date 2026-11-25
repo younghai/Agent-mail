@@ -20,6 +20,7 @@ export default [
 		route("inbox-zero", "routes/inbox-zero.tsx"),
 		route("settings", "routes/settings.tsx"),
 		route("admin", "routes/mailbox-admin.tsx"),
+		route("admin/cost", "routes/mailbox-admin-cost.tsx"),
 		route("admin/clients/:clientId", "routes/mailbox-admin-client.tsx"),
 		route("admin/sla", "routes/mailbox-admin-sla.tsx"),
 		route("admin/tasks/:taskId", "routes/mailbox-admin-task.tsx"),
