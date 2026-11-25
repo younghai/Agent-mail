@@ -8,6 +8,7 @@ import { type KeyboardEvent, useEffect, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 import { useUIStore } from "~/hooks/useUIStore";
 import { useMailboxParams } from "~/hooks/useMailboxParams";
+import { capabilities } from "~/lib/capabilities";
 
 export default function Header() {
 	const [searchQuery, setSearchQuery] = useState("");
@@ -125,24 +126,26 @@ export default function Header() {
 			)}
 
 			<div className="flex items-center gap-1 ml-auto shrink-0">
-				<Tooltip
-					content={
-						agentResultPlacement === "side" && isAgentPanelOpen
-							? "Hide agent side panel"
-							: "Show agent on the right"
-					}
-					side="bottom"
-					asChild
-				>
-					<Button
-						variant={agentResultPlacement === "side" && isAgentPanelOpen ? "secondary" : "ghost"}
-						shape="square"
-						icon={<RobotIcon size={20} />}
-						onClick={toggleAgentPanel}
-						aria-label="Toggle agent panel"
-						className="hidden lg:inline-flex"
-					/>
-				</Tooltip>
+				{capabilities.aiAssistant && (
+					<Tooltip
+						content={
+							agentResultPlacement === "side" && isAgentPanelOpen
+								? "Hide agent side panel"
+								: "Show agent on the right"
+						}
+						side="bottom"
+						asChild
+					>
+						<Button
+							variant={agentResultPlacement === "side" && isAgentPanelOpen ? "secondary" : "ghost"}
+							shape="square"
+							icon={<RobotIcon size={20} />}
+							onClick={toggleAgentPanel}
+							aria-label="Toggle agent panel"
+							className="hidden lg:inline-flex"
+						/>
+					</Tooltip>
+				)}
 				<Tooltip content="Settings" side="bottom" asChild>
 					<Button
 						variant={isSettingsActive ? "secondary" : "ghost"}

@@ -7,6 +7,7 @@ import { FloppyDiskIcon, PaperPlaneTiltIcon, XIcon } from "@phosphor-icons/react
 import { useParams } from "react-router";
 import { useMailboxParams } from "~/hooks/useMailboxParams";
 import { useComposeForm } from "~/hooks/useComposeForm";
+import { capabilities } from "~/lib/capabilities";
 import RichTextEditor from "./RichTextEditor";
 import TemplatePicker from "./TemplatePicker";
 
@@ -185,9 +186,14 @@ export default function ComposePanel() {
 							)}
 						</div>
 						<div className="flex items-center gap-2">
+							{!capabilities.sendMail && (
+								<span className="hidden text-xs text-kumo-subtle md:inline">
+									이 환경에서는 메일을 보내지 않습니다. 작성한 내용은 초안으로 저장됩니다.
+								</span>
+							)}
 							<Button
 								type="button"
-								variant="secondary"
+								variant={capabilities.sendMail ? "secondary" : "primary"}
 								size="sm"
 								loading={isSavingDraft}
 								disabled={isSending}
@@ -196,16 +202,18 @@ export default function ComposePanel() {
 							>
 								{isSavingDraft ? "Saving..." : "Save as Draft"}
 							</Button>
-							<Button
-								type="submit"
-								variant="primary"
-								size="sm"
-								loading={isSending}
-								disabled={isSavingDraft || isSending}
-								icon={<PaperPlaneTiltIcon size={14} />}
-							>
-								{isSending ? "Sending..." : "Send"}
-							</Button>
+							{capabilities.sendMail && (
+								<Button
+									type="submit"
+									variant="primary"
+									size="sm"
+									loading={isSending}
+									disabled={isSavingDraft || isSending}
+									icon={<PaperPlaneTiltIcon size={14} />}
+								>
+									{isSending ? "Sending..." : "Send"}
+								</Button>
+							)}
 						</div>
 					</div>
 				</div>

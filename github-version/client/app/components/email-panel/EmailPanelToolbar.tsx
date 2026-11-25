@@ -22,6 +22,7 @@ import {
 } from "@phosphor-icons/react";
 import type { Folder, Email } from "~/types";
 import type { AgentResultPlacement } from "~/hooks/useUIStore";
+import { capabilities } from "~/lib/capabilities";
 
 interface EmailPanelToolbarProps {
 	email: Email;
@@ -79,17 +80,19 @@ export default function EmailPanelToolbar({
 
 			{isDraftFolder ? (
 				<>
+					{capabilities.sendMail && (
+						<Button
+							variant="primary"
+							size="sm"
+							icon={<PaperPlaneTiltIcon size={16} />}
+							onClick={onSendDraft}
+							loading={isSending}
+						>
+							{isSending ? "Sending..." : "Send"}
+						</Button>
+					)}
 					<Button
-						variant="primary"
-						size="sm"
-						icon={<PaperPlaneTiltIcon size={16} />}
-						onClick={onSendDraft}
-						loading={isSending}
-					>
-						{isSending ? "Sending..." : "Send"}
-					</Button>
-					<Button
-						variant="secondary"
+						variant={capabilities.sendMail ? "secondary" : "primary"}
 						size="sm"
 						icon={<PencilSimpleIcon size={16} />}
 						onClick={onEditDraft}

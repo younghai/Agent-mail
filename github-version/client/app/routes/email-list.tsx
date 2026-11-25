@@ -26,6 +26,7 @@ import { Folders } from "shared/folders";
 import { formatListDate } from "shared/dates";
 import { DEMO_CAMPAIGNS } from "../../shared/campaign-demo.js";
 import MailboxSplitView from "~/components/MailboxSplitView";
+import { capabilities } from "~/lib/capabilities";
 import { getSnippetText } from "~/lib/utils";
 import {
 	useDeleteEmail,
@@ -149,7 +150,7 @@ function FolderEmptyState({
 							{seeding ? "불러오는 중…" : `샘플 캠페인 ${DEMO_CAMPAIGNS.length}건 불러오기`}
 						</Button>
 					)}
-					{showCompose && (
+					{showCompose && (capabilities.sendMail || folder === Folders.DRAFT) && (
 						<Button
 							variant={folder === Folders.INBOX ? "secondary" : "primary"}
 							size="sm"

@@ -24,6 +24,7 @@ import { useMailbox } from "~/queries/mailboxes";
 import { useCustomerSegments } from "~/queries/segments";
 import { useUIStore } from "~/hooks/useUIStore";
 import { ADMIN_TOKENS } from "~/admin/designTokens";
+import { capabilities } from "~/lib/capabilities";
 import type { Email, Folder, Mailbox } from "~/types";
 
 function EmailPanelSkeleton() {
@@ -116,9 +117,11 @@ function EmailAgentResults({
 							Thread workspace
 						</h3>
 					</div>
-					<Button size="sm" variant="primary" onClick={onDraftReply}>
-						Create reply draft
-					</Button>
+					{capabilities.aiAssistant && (
+						<Button size="sm" variant="primary" onClick={onDraftReply}>
+							Create reply draft
+						</Button>
+					)}
 				</div>
 			</div>
 
@@ -283,12 +286,14 @@ function EmailAgentActionBar({
 					<Button size="sm" variant="secondary" onClick={onShowResults}>
 						요약/타임라인 보기
 					</Button>
-					<Button size="sm" variant="secondary" onClick={onCreateTask} loading={isCreatingTask}>
-						Task 생성
-					</Button>
+				<Button size="sm" variant="secondary" onClick={onCreateTask} loading={isCreatingTask}>
+					Task 생성
+				</Button>
+				{capabilities.aiAssistant && (
 					<Button size="sm" variant="primary" onClick={onDraftReply} loading={isAiDrafting}>
 						답장 초안
 					</Button>
+				)}
 					<div className="flex items-center gap-1 rounded-lg bg-kumo-base p-1">
 						<Button
 							size="sm"

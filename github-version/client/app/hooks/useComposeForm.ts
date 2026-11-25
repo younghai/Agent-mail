@@ -4,6 +4,7 @@
 
 import { useKumoToastManager } from "@cloudflare/kumo";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { capabilities } from "~/lib/capabilities";
 import {
 	buildQuotedReplyBlock,
 	escapeHtml,
@@ -261,6 +262,8 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 
 	const handleSend = async (e: FormEvent, onClose: () => void) => {
 		e.preventDefault(); if (isSending) return; setError(null);
+		// The server refuses delivery in this build; say so instead of failing after "Sending...".
+		if (!capabilities.sendMail) { setError("이 환경에서는 메일을 보낼 수 없습니다. 'Save as Draft'로 저장해 주세요."); return; }
 		if (!currentMailbox || !mailboxId) { setError("No mailbox selected."); return; }
 		const toRecipients = splitEmailList(to);
 		if (toRecipients.length === 0) { setError("Add at least one recipient."); return; }
