@@ -40,3 +40,35 @@ export function serializeFolder(row) {
     sortOrder: row.sort_order,
   };
 }
+
+// Every email column the client reads, named once. The email endpoints share
+// this list and differ only in what they add: bodies, attachments, counters.
+const EMAIL_COLUMNS = `e.id, e.mailbox_id, e.folder_id, e.thread_id, e.subject, e.sender, e.sender_name,
+  e.recipient, e.cc, e.bcc, e.message_id, e.in_reply_to, e.email_references, e.raw_headers,
+  e.is_read, e.is_starred, e.is_draft, e.email_date, e.received_at, e.created_at, e.updated_at,
+  e.provider, e.provider_message_id, e.approval_state, e.approval_meta, e.citations_json,
+  e.agent_summary, e.agent_timeline_json, e.agent_tasks_json`;
+
+// List and search rows carry a snippet; the panel fetches the full message.
+export const EMAIL_SUMMARY_COLUMNS = `${EMAIL_COLUMNS}, LEFT(COALESCE(e.body_text, ''), 200) AS snippet`;
+export const EMAIL_FULL_COLUMNS = `${EMAIL_COLUMNS}, e.body_text, e.body_html`;
+
+// One shape for every email the client receives, whichever endpoint sent it.
+// `search_vector` is an index helper and never leaves the server.
+export function serializeEmail(row, attachments = []) {
+  const { is_read, is_starred, email_date, body_html, body_text, ...email } = row;
+  return {
+    ...email,
+    read: is_read,
+    starred: is_starred,
+    date: email_date ?? email.received_at ?? null,
+    body: body_html || body_text || null,
+    body_html: body_html || null,
+    body_text: body_text || null,
+    attachments,
+  };
+}
+
+export function serializeAttachment({ storage_key, size_bytes, ...attachment }) {
+  return { ...attachment, size: size_bytes == null ? null : Number(size_bytes) };
+}

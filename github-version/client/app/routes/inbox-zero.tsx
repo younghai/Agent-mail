@@ -10,7 +10,7 @@ import { Folders } from "shared/folders";
 import { useMailboxParams } from "~/hooks/useMailboxParams";
 import { useKeyboardShortcut } from "~/hooks/useKeyboardShortcut";
 import { useUIStore } from "~/hooks/useUIStore";
-import { useEmails, useMoveEmail, useUpdateEmail } from "~/queries/emails";
+import { useEmail, useEmails, useMoveEmail, useUpdateEmail } from "~/queries/emails";
 import InboxZeroCard, { InboxZeroEmpty } from "~/components/InboxZeroCard";
 import type { Email } from "~/types";
 
@@ -109,6 +109,13 @@ export default function InboxZeroRoute() {
 		return allEmails.find((e: Email) => e.id === id);
 	}, [queue.ids, queue.index, allEmails]);
 
+	// List rows carry no body; the card and the reply quote use the full message.
+	const { data: currentDetail, isPending: detailPending } = useEmail(
+		mailboxId,
+		currentEmail?.id,
+	);
+	const shownEmail = currentDetail ?? currentEmail;
+
 	// ---- Actions ----
 	const goBack = useCallback(() => {
 		navigate(`/mailbox/${mailboxSlug}/emails/inbox`);
@@ -135,13 +142,13 @@ export default function InboxZeroRoute() {
 	}, [mailboxId, currentEmail, moveEmail, advanceAfterAction]);
 
 	const handleReply = useCallback(() => {
-		if (!currentEmail) return;
+		if (!shownEmail) return;
 		// Mark as read first
-		if (mailboxId && !currentEmail.read) {
-			updateEmail.mutate({ mailboxId, id: currentEmail.id, data: { read: true } });
+		if (mailboxId && !shownEmail.read) {
+			updateEmail.mutate({ mailboxId, id: shownEmail.id, data: { read: true } });
 		}
-		startCompose({ mode: "reply", originalEmail: currentEmail });
-	}, [currentEmail, mailboxId, updateEmail, startCompose]);
+		startCompose({ mode: "reply", originalEmail: shownEmail });
+	}, [shownEmail, mailboxId, updateEmail, startCompose]);
 
 	const handleSkip = useCallback(() => {
 		dispatch({ type: "next" });
@@ -207,10 +214,14 @@ export default function InboxZeroRoute() {
 					</div>
 				) : isEmpty ? (
 					<InboxZeroEmpty />
-				) : currentEmail ? (
+				) : detailPending || !shownEmail ? (
+					<div className="flex justify-center py-16">
+						<Loader size="lg" />
+					</div>
+				) : (
 					<div className="max-w-3xl mx-auto">
 						<InboxZeroCard
-							email={currentEmail}
+							email={shownEmail}
 							remaining={queue.remaining}
 							total={allEmails.length || queue.remaining}
 							onArchive={handleArchive}
@@ -218,10 +229,6 @@ export default function InboxZeroRoute() {
 							onReply={handleReply}
 							onSkip={handleSkip}
 						/>
-					</div>
-				) : (
-					<div className="flex justify-center py-16">
-						<Loader size="lg" />
 					</div>
 				)}
 			</div>

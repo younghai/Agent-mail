@@ -103,7 +103,7 @@ export default function DraftsPanel({ mailboxId }: DraftsPanelProps) {
 							</div>
 						</div>
 						<p className="text-[12px] leading-relaxed text-kumo-strong line-clamp-3 mb-2">
-							{plainBodyPreview(draft.body ?? null)}
+							{plainBodyPreview(draft.body ?? draft.snippet ?? null)}
 						</p>
 						{citations.length > 0 && (
 							<div className="flex flex-wrap gap-1.5 mt-2">

@@ -159,3 +159,87 @@ test('campaign review works end to end: seed, complete requirements, keep one re
   assert.equal((await call(`${workspace}/reply`, { method: 'POST', body: { subject: '', body: '' } })).status, 400);
   assert.equal((await call(`${base}/emails/${randomUUID()}/campaign-workspace`)).status, 404);
 });
+
+async function seededMailbox() {
+  const base = `/api/v1/mailboxes/${await createMailbox()}`;
+  await call(`${base}/demo-campaigns/seed`, { method: 'POST', body: {} });
+  return base;
+}
+
+const inbox = (base) => call(`${base}/emails?folder=inbox&limit=20`).then((response) => response.body.data.emails);
+
+test('marking read and starring use the names the client sends', { skip }, async () => {
+  const base = await seededMailbox();
+  const { id } = (await inbox(base))[0];
+  const mark = (data) => call(`${base}/emails/${id}`, { method: 'PUT', body: data });
+
+  assert.equal((await mark({ read: true })).status, 200);
+  assert.equal((await mark({ starred: true })).status, 200);
+  const [updated] = await inbox(base);
+  assert.deepEqual([updated.read, updated.starred], [true, true]);
+  assert.equal((await mark({ read: 'yes' })).status, 400);
+});
+
+test('list, detail, thread and search return one email shape', { skip }, async () => {
+  const base = await seededMailbox();
+  const listed = (await inbox(base))[0];
+  const detail = (await call(`${base}/emails/${listed.id}`)).body.data;
+  const thread = (await call(`${base}/threads/${listed.thread_id}`)).body.data;
+  const search = (await call(`${base}/search?q=OLED`)).body.data.emails;
+
+  const rows = [['list', listed], ['detail', detail], ['thread', thread[0]], ['search', search[0]]];
+  for (const [name, row] of rows) {
+    assert.equal(typeof row.read, 'boolean', `${name} row has read`);
+    assert.equal(typeof row.starred, 'boolean', `${name} row has starred`);
+    assert.ok(row.date, `${name} row has date`);
+    for (const key of ['body', 'body_html', 'body_text', 'attachments']) assert.ok(key in row, `${name} row has ${key}`);
+    assert.equal('search_vector' in row, false, `${name} row hides search_vector`);
+  }
+  assert.match(thread[0].body, /<img/, 'thread rows carry the full message');
+  assert.match(detail.body, /<img/, 'detail rows carry the full message');
+  // List and search rows carry a snippet instead of the message body.
+  for (const [name, row] of [['list', listed], ['search', search[0]]]) {
+    assert.deepEqual([row.body, row.body_html, row.body_text], [null, null, null], `${name} row has no body`);
+    assert.ok(row.snippet.length > 0, `${name} row has a snippet`);
+  }
+});
+
+test('thread messages carry their attachments', { skip }, async () => {
+  const base = await seededMailbox();
+  const { id, thread_id } = (await inbox(base))[0];
+  const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 1 });
+  try {
+    await pool.query(
+      `INSERT INTO attachments (email_id, filename, mimetype, size_bytes, storage_key)
+       VALUES ($1, 'brief.pdf', 'application/pdf', 2048, 'contract-test/none')`, [id]);
+  } finally {
+    await pool.end();
+  }
+  const detail = (await call(`${base}/emails/${id}`)).body.data;
+  const thread = (await call(`${base}/threads/${thread_id}`)).body.data;
+  const shape = ({ filename, size, storage_key }) => [filename, size, storage_key];
+  assert.deepEqual([detail.attachments.map(shape), thread[0].attachments.map(shape)],
+    [[['brief.pdf', 2048, undefined]], [['brief.pdf', 2048, undefined]]]);
+});
+
+test('a saved draft comes back with its body', { skip }, async () => {
+  const base = `/api/v1/mailboxes/${await createMailbox()}`;
+  const saved = await call(`${base}/drafts`, { method: 'POST', body: {
+    to: 'someone@example.test', subject: 'Draft A', body: '<p>Saved body</p>',
+  } });
+  assert.equal(saved.status, 200);
+  const draft = (await call(`${base}/emails/${saved.body.data.id}`)).body.data;
+  assert.equal(draft.body, '<p>Saved body</p>');
+  assert.equal(draft.is_draft, true);
+  const drafts = (await call(`${base}/emails?folder=draft`)).body.data.emails;
+  assert.deepEqual([drafts[0].id, drafts[0].is_draft], [saved.body.data.id, true]);
+});
+
+test('the inbox list can be limited to unread emails', { skip }, async () => {
+  const base = await seededMailbox();
+  const { id } = (await inbox(base))[0];
+  assert.equal((await call(`${base}/emails/${id}`, { method: 'PUT', body: { read: true } })).status, 200);
+  const unread = (await call(`${base}/emails?folder=inbox&unread=true&limit=200`)).body.data;
+  assert.equal(unread.totalCount, 8);
+  assert.deepEqual(unread.emails.map((row) => row.read), Array(8).fill(false));
+});

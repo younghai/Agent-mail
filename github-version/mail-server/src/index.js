@@ -40,7 +40,9 @@ import {
   sendError,
   wrapAsyncRoutes,
 } from './lib/http.js';
-import { serializeFolder, serializeMailbox } from './lib/ui-compat.js';
+import {
+  EMAIL_FULL_COLUMNS, EMAIL_SUMMARY_COLUMNS, serializeAttachment, serializeEmail, serializeFolder, serializeMailbox,
+} from './lib/ui-compat.js';
 import { createAdminAuth, requireAdminRole } from './lib/admin-auth.js';
 import { createSessionStore, registerProductionWeb } from './lib/production-web.js';
 
@@ -580,7 +582,7 @@ app.get('/api/v1/admin/tasks/:taskId', async (req, res) => {
     query('SELECT * FROM admin_task_events WHERE task_id = $1 ORDER BY created_at DESC LIMIT 100', [task.id]),
     query(`SELECT * FROM admin_audit_logs WHERE entity_type = 'task' AND entity_id = $1 ORDER BY created_at DESC LIMIT 100`, [task.id]),
     task.mailboxId && task.requestEmailId
-      ? query('SELECT * FROM emails WHERE mailbox_id = $1 AND id = $2', [task.mailboxId, task.requestEmailId])
+      ? query(`SELECT ${EMAIL_FULL_COLUMNS} FROM emails e WHERE e.mailbox_id = $1 AND e.id = $2`, [task.mailboxId, task.requestEmailId])
       : Promise.resolve({ rows: [] }),
   ]);
 
@@ -591,7 +593,7 @@ app.get('/api/v1/admin/tasks/:taskId', async (req, res) => {
       client: clientRows[0] ? clientToApi(clientRows[0]) : null,
       events: events.map(taskEventToApi),
       audits: audits.map(auditToApi),
-      email: emailRows[0] || null,
+      email: emailRows[0] ? serializeEmail(emailRows[0]) : null,
     },
   });
 });
@@ -796,14 +798,11 @@ app.delete('/api/v1/mailboxes/:mailboxId', async (req, res) => {
 // ---------- Emails ----------
 app.get('/api/v1/mailboxes/:mailboxId/emails', async (req, res) => {
   const { mailboxId } = req.params;
-  const { folder, thread_id, page = '1', limit = '20', sortColumn = 'received_at', sortDirection = 'DESC' } = req.query;
+  const { folder, thread_id, unread, page = '1', limit = '20', sortColumn = 'received_at', sortDirection = 'DESC' } = req.query;
   const pagination = getBoundedPagination(page, limit);
 
-  let sql = `SELECT e.*,
-    e.is_read AS read,
-    e.is_starred AS starred,
-    e.email_date AS date,
-    LEFT(COALESCE(e.body_text, ''), 200) AS snippet,
+  // List rows carry a snippet, never the body; the panel fetches the full message.
+  let sql = `SELECT ${EMAIL_SUMMARY_COLUMNS},
     (SELECT COUNT(*)::int FROM attachments a WHERE a.email_id = e.id) AS attachment_count,
     (SELECT COUNT(*)::int FROM emails t WHERE t.thread_id = e.thread_id AND t.mailbox_id = e.mailbox_id) AS thread_count,
     (SELECT COUNT(*)::int FROM emails t WHERE t.thread_id = e.thread_id AND t.mailbox_id = e.mailbox_id AND NOT t.is_read) AS thread_unread_count,
@@ -832,6 +831,10 @@ app.get('/api/v1/mailboxes/:mailboxId/emails', async (req, res) => {
     countParams.push(thread_id);
     idx++;
   }
+  if (unread === 'true') {
+    sql += ' AND NOT e.is_read';
+    countSql += ' AND NOT is_read';
+  }
 
   const allowedSort = ['id', 'subject', 'sender', 'recipient', 'received_at', 'is_read', 'is_starred'];
   const sortCol = allowedSort.includes(sortColumn) ? sortColumn : 'received_at';
@@ -845,7 +848,7 @@ app.get('/api/v1/mailboxes/:mailboxId/emails', async (req, res) => {
     query(countSql, countParams),
   ]);
 
-  res.json({ success: true, data: { emails, totalCount: parseInt(countRows[0].count) } });
+  res.json({ success: true, data: { emails: emails.map((row) => serializeEmail(row)), totalCount: parseInt(countRows[0].count) } });
 });
 
 app.post('/api/v1/mailboxes/:mailboxId/emails', async (req, res) => {
@@ -866,24 +869,24 @@ app.post('/api/v1/mailboxes/:mailboxId/emails', async (req, res) => {
 });
 
 app.get('/api/v1/mailboxes/:mailboxId/emails/:id', async (req, res) => {
-  try {
-    const { rows: emailRows } = await query('SELECT * FROM emails WHERE id = $1 AND mailbox_id = $2', [req.params.id, req.params.mailboxId]);
-    if (!emailRows.length) return sendError(res, 404, 'Email not found');
-    const { rows: attRows } = await query('SELECT * FROM attachments WHERE email_id = $1', [req.params.id]);
-    res.json({ success: true, data: { ...emailRows[0], attachments: attRows } });
-  } catch (e) { console.error(e); sendError(res, 500, e.message); }
+  const { rows } = await query(`SELECT ${EMAIL_FULL_COLUMNS} FROM emails e WHERE e.id = $1 AND e.mailbox_id = $2`, [req.params.id, req.params.mailboxId]);
+  if (!rows.length) return sendError(res, 404, 'Email not found');
+  const { rows: attachments } = await query('SELECT * FROM attachments WHERE email_id = $1', [req.params.id]);
+  res.json({ success: true, data: serializeEmail(rows[0], attachments.map(serializeAttachment)) });
 });
 
 app.put('/api/v1/mailboxes/:mailboxId/emails/:id', async (req, res) => {
-  const { is_read, is_starred } = req.body;
-  const fields = [];
-  const values = [];
-  let idx = 1;
-  if (is_read !== undefined) { fields.push(`is_read = $${idx++}`); values.push(is_read); }
-  if (is_starred !== undefined) { fields.push(`is_starred = $${idx++}`); values.push(is_starred); }
-  if (!fields.length) return sendError(res, 400, 'No fields to update');
-  values.push(req.params.id, req.params.mailboxId);
-  const result = await query(`UPDATE emails SET ${fields.join(', ')}, updated_at = now() WHERE id = $${idx} AND mailbox_id = $${idx + 1}`, values);
+  // The client sends `read` and `starred`, the names every email row uses.
+  const { read, starred } = req.body;
+  const changes = [['is_read', read], ['is_starred', starred]].filter(([, value]) => value !== undefined);
+  if (changes.some(([, value]) => typeof value !== 'boolean')) return sendError(res, 400, 'read and starred must be true or false');
+  if (!changes.length) return sendError(res, 400, 'No fields to update');
+  const values = changes.map(([, value]) => value);
+  const result = await query(
+    `UPDATE emails SET ${changes.map(([column], i) => `${column} = $${i + 1}`).join(', ')}, updated_at = now()
+     WHERE id = $${values.length + 1} AND mailbox_id = $${values.length + 2}`,
+    [...values, req.params.id, req.params.mailboxId],
+  );
   if (!result.rowCount) return sendError(res, 404, 'Email not found');
   res.json({ success: true });
 });
@@ -916,13 +919,19 @@ app.post('/api/v1/mailboxes/:mailboxId/emails/:id/move', async (req, res) => {
 
 // ---------- Threads ----------
 app.get('/api/v1/mailboxes/:mailboxId/threads/:threadId', async (req, res) => {
-  try {
-    const { rows } = await query(
-      'SELECT * FROM emails WHERE mailbox_id = $1 AND thread_id = $2 ORDER BY received_at ASC',
-      [req.params.mailboxId, req.params.threadId]
-    );
-    res.json({ success: true, data: rows });
-  } catch (e) { console.error(e); sendError(res, 500, e.message); }
+  const { rows } = await query(
+    `SELECT ${EMAIL_FULL_COLUMNS} FROM emails e WHERE e.mailbox_id = $1 AND e.thread_id = $2 ORDER BY e.received_at ASC`,
+    [req.params.mailboxId, req.params.threadId],
+  );
+  const { rows: attachments } = rows.length
+    ? await query('SELECT * FROM attachments WHERE email_id = ANY($1::uuid[])', [rows.map((row) => row.id)])
+    : { rows: [] };
+  const byEmail = new Map();
+  for (const attachment of attachments) {
+    byEmail.set(attachment.email_id, [...(byEmail.get(attachment.email_id) || []), serializeAttachment(attachment)]);
+  }
+  // Thread rows seed the client's per-email cache, so they carry what a detail row carries.
+  res.json({ success: true, data: rows.map((row) => serializeEmail(row, byEmail.get(row.id))) });
 });
 
 app.post('/api/v1/mailboxes/:mailboxId/threads/:threadId/read', async (req, res) => {
@@ -1003,12 +1012,12 @@ app.get('/api/v1/mailboxes/:mailboxId/search', async (req, res) => {
   const { q, page = '1', limit = '20' } = req.query;
   if (!q) return sendError(res, 400, 'Query parameter q is required');
   const { offset, limit: parsedLimit } = getBoundedPagination(page, limit);
-  const base = `FROM emails WHERE mailbox_id = $1 AND search_vector @@ plainto_tsquery('simple', $2)`;
+  const base = `FROM emails e WHERE e.mailbox_id = $1 AND e.search_vector @@ plainto_tsquery('simple', $2)`;
   const [{ rows }, { rows: countRows }] = await Promise.all([
-    query(`SELECT * ${base} ORDER BY received_at DESC LIMIT $3 OFFSET $4`, [req.params.mailboxId, q, parsedLimit, offset]),
+    query(`SELECT ${EMAIL_SUMMARY_COLUMNS} ${base} ORDER BY e.received_at DESC LIMIT $3 OFFSET $4`, [req.params.mailboxId, q, parsedLimit, offset]),
     query(`SELECT COUNT(*)::int AS count ${base}`, [req.params.mailboxId, q]),
   ]);
-  res.json({ success: true, data: { emails: rows, totalCount: countRows[0].count } });
+  res.json({ success: true, data: { emails: rows.map(serializeEmail), totalCount: countRows[0].count } });
 });
 
 // ---------- Attachments ----------
