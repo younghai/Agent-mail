@@ -8,6 +8,9 @@ const path = (mailboxId: string, emailId: string) =>
 const json = (method: string, body: unknown) => ({ method, body: JSON.stringify(body) });
 
 export const campaignDemoApi = {
+  seedSamples: (mailboxId: string) =>
+    request<{ created: number; total: number }>(
+      `/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/demo-campaigns/seed`, json("POST", {})),
   getWorkspace: (mailboxId: string, emailId: string) =>
     request<CampaignWorkspace>(path(mailboxId, emailId)),
   saveRequirements: (mailboxId: string, emailId: string, requirements: Record<string, string>) =>

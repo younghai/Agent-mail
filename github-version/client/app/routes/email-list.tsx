@@ -2,11 +2,12 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Button, Pagination, Tooltip } from "@cloudflare/kumo";
+import { Button, Pagination, Tooltip, useKumoToastManager } from "@cloudflare/kumo";
 import {
 	ArchiveIcon,
 	ArrowBendUpLeftIcon,
 	ArrowsClockwiseIcon,
+	DownloadSimpleIcon,
 	EnvelopeOpenIcon,
 	EnvelopeSimpleIcon,
 	FileIcon,
@@ -23,6 +24,7 @@ import { useParams } from "react-router";
 import { useMailboxParams } from "~/hooks/useMailboxParams";
 import { Folders } from "shared/folders";
 import { formatListDate } from "shared/dates";
+import { DEMO_CAMPAIGNS } from "../../shared/campaign-demo.js";
 import MailboxSplitView from "~/components/MailboxSplitView";
 import { getSnippetText } from "~/lib/utils";
 import {
@@ -32,6 +34,7 @@ import {
 	useUpdateEmail,
 } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
+import { useSeedCampaignSamples } from "~/queries/campaign-demo";
 import { queryKeys } from "~/queries/keys";
 import { useUIStore } from "~/hooks/useUIStore";
 import type { Email } from "~/types";
@@ -49,9 +52,9 @@ const FOLDER_EMPTY_STATES: Record<
 > = {
 	[Folders.INBOX]: {
 		icon: <TrayIcon size={48} weight="thin" className="text-kumo-subtle" />,
-		title: "Your inbox is empty",
+		title: "받은 메일함이 비어 있습니다",
 		description:
-			"New emails will appear here when they arrive. Send an email to get the conversation started.",
+			"샘플 캠페인 9건을 불러와 요약, 회신 초안, 요구사항, 캠페인 초안 검토를 시작할 수 있습니다.",
 		showCompose: true,
 	},
 	[Folders.SENT]: {
@@ -107,9 +110,13 @@ function EmailListSkeleton() {
 function FolderEmptyState({
 	folder,
 	onCompose,
+	onSeedSamples,
+	seeding,
 }: {
 	folder?: string;
 	onCompose: () => void;
+	onSeedSamples: () => void;
+	seeding: boolean;
 }) {
 	const config = (folder && FOLDER_EMPTY_STATES[folder]) || {
 		icon: (
@@ -118,6 +125,7 @@ function FolderEmptyState({
 		title: "No emails",
 		description: "This folder is empty.",
 	};
+	const showCompose = "showCompose" in config && config.showCompose;
 
 	return (
 		<div className="flex flex-col items-center justify-center py-24 px-6 text-center">
@@ -128,15 +136,30 @@ function FolderEmptyState({
 			<p className="text-sm text-kumo-subtle max-w-xs mb-5">
 				{config.description}
 			</p>
-			{"showCompose" in config && config.showCompose && (
-				<Button
-					variant="primary"
-					size="sm"
-					icon={<PencilSimpleIcon size={16} />}
-					onClick={onCompose}
-				>
-					Compose
-				</Button>
+			{(folder === Folders.INBOX || showCompose) && (
+				<div className="flex flex-wrap justify-center gap-2">
+					{folder === Folders.INBOX && (
+						<Button
+							variant="primary"
+							size="sm"
+							icon={<DownloadSimpleIcon size={16} />}
+							onClick={onSeedSamples}
+							disabled={seeding}
+						>
+							{seeding ? "불러오는 중…" : `샘플 캠페인 ${DEMO_CAMPAIGNS.length}건 불러오기`}
+						</Button>
+					)}
+					{showCompose && (
+						<Button
+							variant={folder === Folders.INBOX ? "secondary" : "primary"}
+							size="sm"
+							icon={<PencilSimpleIcon size={16} />}
+							onClick={onCompose}
+						>
+							Compose
+						</Button>
+					)}
+				</div>
 			)}
 		</div>
 	);
@@ -228,6 +251,23 @@ export default function EmailListRoute() {
 				queryKey: queryKeys.folders.list(mailboxId),
 			});
 		}
+	};
+
+	const toastManager = useKumoToastManager();
+	const seedSamples = useSeedCampaignSamples();
+	const handleSeedSamples = () => {
+		if (!mailboxId) return;
+		seedSamples.mutate(mailboxId, {
+			onSuccess: ({ created }) => toastManager.add({
+				title: created > 0
+					? `샘플 캠페인 ${created}건을 불러왔습니다. 메일을 열어 검토를 시작하세요.`
+					: "샘플 캠페인은 이미 있습니다. 받은 메일함에서 확인하세요.",
+			}),
+			onError: (err) => toastManager.add({
+				title: err instanceof Error ? err.message : "샘플 캠페인을 불러오지 못했습니다. 다시 시도해 주세요.",
+				variant: "error",
+			}),
+		});
 	};
 
 	// Thread-aware helpers
@@ -462,6 +502,8 @@ export default function EmailListRoute() {
 						<FolderEmptyState
 							folder={folder}
 							onCompose={() => startCompose()}
+							onSeedSamples={handleSeedSamples}
+							seeding={seedSamples.isPending}
 						/>
 					)}
 				</div>
