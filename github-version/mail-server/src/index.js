@@ -43,6 +43,7 @@ import {
 import {
   EMAIL_FULL_COLUMNS, EMAIL_SUMMARY_COLUMNS, serializeAttachment, serializeEmail, serializeFolder, serializeMailbox,
 } from './lib/ui-compat.js';
+import { buildSearch } from './lib/search.js';
 import { createAdminAuth, requireAdminRole } from './lib/admin-auth.js';
 import { createSessionStore, registerProductionWeb } from './lib/production-web.js';
 
@@ -1009,13 +1010,13 @@ app.delete('/api/v1/mailboxes/:mailboxId/folders/:id', async (req, res) => {
 
 // ---------- Search ----------
 app.get('/api/v1/mailboxes/:mailboxId/search', async (req, res) => {
-  const { q, page = '1', limit = '20' } = req.query;
-  if (!q) return sendError(res, 400, 'Query parameter q is required');
-  const { offset, limit: parsedLimit } = getBoundedPagination(page, limit);
-  const base = `FROM emails e WHERE e.mailbox_id = $1 AND e.search_vector @@ plainto_tsquery('simple', $2)`;
+  const { offset, limit } = getBoundedPagination(req.query.page, req.query.limit);
+  const { where, params } = buildSearch({ ...req.query, mailboxId: req.params.mailboxId });
+  const base = `FROM emails e WHERE ${where}`;
   const [{ rows }, { rows: countRows }] = await Promise.all([
-    query(`SELECT ${EMAIL_SUMMARY_COLUMNS} ${base} ORDER BY e.received_at DESC LIMIT $3 OFFSET $4`, [req.params.mailboxId, q, parsedLimit, offset]),
-    query(`SELECT COUNT(*)::int AS count ${base}`, [req.params.mailboxId, q]),
+    query(`SELECT ${EMAIL_SUMMARY_COLUMNS} ${base} ORDER BY e.received_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]),
+    query(`SELECT COUNT(*)::int AS count ${base}`, params),
   ]);
   res.json({ success: true, data: { emails: rows.map(serializeEmail), totalCount: countRows[0].count } });
 });

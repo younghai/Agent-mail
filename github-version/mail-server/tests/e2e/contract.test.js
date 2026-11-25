@@ -243,3 +243,39 @@ test('the inbox list can be limited to unread emails', { skip }, async () => {
   assert.equal(unread.totalCount, 8);
   assert.deepEqual(unread.emails.map((row) => row.read), Array(8).fill(false));
 });
+
+test('search takes the parameters the client sends and honours the operators it advertises', { skip }, async () => {
+  const base = await seededMailbox();
+  const oled = (await inbox(base)).find((row) => row.subject.includes('OLED'));
+  await call(`${base}/emails/${oled.id}`, { method: 'PUT', body: { starred: true } });
+  await call(`${base}/emails/${oled.id}`, { method: 'PUT', body: { read: true } });
+  const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 1 });
+  try {
+    await pool.query(
+      `INSERT INTO attachments (email_id, filename, mimetype, size_bytes, storage_key)
+       VALUES ($1, 'brief.pdf', 'application/pdf', 2048, 'contract-test/none')`, [oled.id]);
+  } finally {
+    await pool.end();
+  }
+  // Sent exactly as client/app/lib/search-parser.ts turns the query into parameters.
+  const search = async (params) => {
+    const response = await call(`${base}/search?${new URLSearchParams({ page: '1', limit: '25', ...params })}`);
+    const ids = response.body?.data?.emails.map((row) => row.id);
+    return response.status === 200 ? { status: 200, ids } : { status: response.status, code: response.body?.error?.code };
+  };
+
+  assert.deepEqual(await search({ q: 'OLED' }), { status: 200, ids: [oled.id] }, 'q: OLED');
+  assert.deepEqual(await search({ from: 'lg.example', subject: '런칭' }), { status: 200, ids: [oled.id] }, 'from:lg.example subject:런칭');
+  assert.deepEqual(await search({ folder: 'inbox', is_starred: 'true' }), { status: 200, ids: [oled.id] }, 'in:inbox is:starred');
+  assert.deepEqual(await search({ folder: 'draft' }), { status: 200, ids: [] }, 'in:draft');
+  assert.deepEqual((await search({ is_read: 'false' })).ids.length, 8, 'is:unread');
+  assert.deepEqual(await search({ has_attachment: 'true' }), { status: 200, ids: [oled.id] }, 'has:attachment');
+  const skypass = (await inbox(base)).find((row) => row.subject.includes('SKYPASS')).id;
+  assert.deepEqual(await search({ date_start: '2026-11-01T00:00:00.000Z', q: 'SKYPASS' }), { status: 200, ids: [skypass] }, 'after:2026-11-01 SKYPASS');
+  assert.deepEqual(await search({ date_start: '2027-01-01T00:00:00.000Z', q: 'SKYPASS' }), { status: 200, ids: [] }, 'after:2027-01-01 SKYPASS');
+  assert.deepEqual(await search({ date_end: '2020-01-01T00:00:00.000Z' }), { status: 200, ids: [] }, 'before:2020-01-01');
+  // A search the server cannot act on must fail, not list the mailbox as if it were a result.
+  for (const params of [{}, { is_read: 'maybe' }, { date_start: 'not-a-date' }, { after: '2026-11-01' }]) {
+    assert.deepEqual(await search(params), { status: 400, code: 'VALIDATION_ERROR' }, JSON.stringify(params));
+  }
+});

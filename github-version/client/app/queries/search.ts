@@ -30,7 +30,7 @@ export function useSearchEmails(
 				page: String(page),
 				limit: String(SEARCH_PAGE_SIZE),
 			};
-			if (parsed.query) params.query = parsed.query;
+			if (parsed.query) params.q = parsed.query;
 			if (parsed.from) params.from = parsed.from;
 			if (parsed.to) params.to = parsed.to;
 			if (parsed.subject) params.subject = parsed.subject;
