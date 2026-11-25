@@ -13,6 +13,7 @@ import { useUIStore } from "~/hooks/useUIStore";
 import { ApiError } from "~/services/api";
 import { useMailboxParams } from "~/hooks/useMailboxParams";
 import { encodeMailboxSlug } from "~/lib/mailbox-slug";
+import { capabilities } from "~/lib/capabilities";
 
 export default function MailboxRoute() {
 	const { mailboxId, mailboxSlug } = useMailboxParams();
@@ -82,8 +83,8 @@ isSidebarOpen ? "block" : "hidden"
 				</main>
 			</div>
 
-			{/* Agent + MCP sidebar -- togglable on desktop */}
-			{agentResultPlacement === "side" && isAgentPanelOpen && (
+			{/* Agent + MCP sidebar -- togglable on desktop, only where the AI service answers */}
+			{capabilities.aiAssistant && agentResultPlacement === "side" && isAgentPanelOpen && (
 				<div className="hidden lg:flex w-[380px] shrink-0 border-l border-kumo-line flex-col bg-kumo-base overflow-hidden">
 					<AgentSidebar />
 				</div>

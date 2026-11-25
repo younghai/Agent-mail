@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Dialog } from "@cloudflare/kumo";
+import { capabilities } from "~/lib/capabilities";
 import {
 	ArchiveIcon,
 	EnvelopeSimpleIcon,
@@ -136,17 +137,19 @@ export default function CommandPalette() {
 					closeCommandPalette();
 				},
 			});
-			out.push({
-				id: "agent:toggle",
-				label: "Toggle email agent panel",
-				hint: "Action",
-				icon: <RobotIcon size={16} weight="regular" />,
-				keywords: ["agent", "ai", "panel", "toggle"],
-				run: () => {
-					toggleAgentPanel();
-					closeCommandPalette();
-				},
-			});
+			if (capabilities.aiAssistant) {
+				out.push({
+					id: "agent:toggle",
+					label: "Toggle email agent panel",
+					hint: "Action",
+					icon: <RobotIcon size={16} weight="regular" />,
+					keywords: ["agent", "ai", "panel", "toggle"],
+					run: () => {
+						toggleAgentPanel();
+						closeCommandPalette();
+					},
+				});
+			}
 			out.push({
 				id: "settings:mailbox",
 				label: "Open settings",

@@ -125,7 +125,7 @@ function EmailAgentResults({
 				</div>
 			</div>
 
-			<div className="grid gap-4 p-4 xl:grid-cols-[1fr_1fr]">
+				<div className={`grid gap-4 p-4 ${capabilities.aiAssistant ? "xl:grid-cols-[1fr_1fr]" : ""}`}>
 				<div className="space-y-4">
 					<div className="rounded-xl border border-kumo-line bg-kumo-base p-4">
 						<h4 className="text-sm font-semibold text-kumo-default">메일/스레드 요약</h4>
@@ -239,9 +239,11 @@ function EmailAgentResults({
 						</div>
 					</div>
 
-					<div className="h-[460px] overflow-hidden rounded-xl border border-kumo-line bg-kumo-base">
-						<AgentSurface />
-					</div>
+					{capabilities.aiAssistant && (
+						<div className="h-[460px] overflow-hidden rounded-xl border border-kumo-line bg-kumo-base">
+							<AgentSurface />
+						</div>
+					)}
 				</div>
 			</div>
 		</section>
@@ -294,6 +296,8 @@ function EmailAgentActionBar({
 						답장 초안
 					</Button>
 				)}
+				{/* The right-hand placement is the AI panel, so the choice only exists with it. */}
+				{capabilities.aiAssistant && (
 					<div className="flex items-center gap-1 rounded-lg bg-kumo-base p-1">
 						<Button
 							size="sm"
@@ -310,6 +314,7 @@ function EmailAgentActionBar({
 							오른쪽
 						</Button>
 					</div>
+				)}
 				</div>
 			</div>
 		</div>
