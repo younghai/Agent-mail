@@ -14,6 +14,7 @@ import {
 import EmailAttachmentList from "~/components/EmailAttachmentList";
 import EmailIframe from "~/components/EmailIframe";
 import SegmentBadge from "~/components/SegmentBadge";
+import { capabilities } from "~/lib/capabilities";
 import {
 	formatDetailDate,
 	formatShortDate,
@@ -176,7 +177,7 @@ export default function ThreadMessage({
 
 				{isDraft && (onSendDraft || onEditDraft || onDeleteDraft) && (
 					<div className="flex gap-2 mt-3 md:ml-[42px]">
-						{onSendDraft && (
+						{onSendDraft && capabilities.sendMail && (
 							<Button
 								variant="primary"
 								size="sm"

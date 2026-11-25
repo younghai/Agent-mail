@@ -9,7 +9,6 @@ import { useMailboxParams } from "~/hooks/useMailboxParams";
 import { useComposeForm } from "~/hooks/useComposeForm";
 import { capabilities } from "~/lib/capabilities";
 import RichTextEditor from "./RichTextEditor";
-import TemplatePicker from "./TemplatePicker";
 
 export default function ComposePanel() {
 	const { folder } = useParams<{ folder: string }>();
@@ -166,15 +165,6 @@ export default function ComposePanel() {
 							<Button type="button" variant="ghost" size="sm" onClick={closeCompose} disabled={isSending}>
 								Discard
 							</Button>
-							<TemplatePicker
-								mailboxId={mailboxId}
-								currentSubject={subject}
-								currentBody={body}
-								onApply={(template) => {
-									if (template.subject) setSubject(template.subject);
-									setBody(template.body);
-								}}
-							/>
 							{autosaveLabel && (
 								<span
 									className="text-xs text-kumo-subtle"

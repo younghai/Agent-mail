@@ -44,6 +44,7 @@ import {
   EMAIL_FULL_COLUMNS, EMAIL_SUMMARY_COLUMNS, serializeAttachment, serializeEmail, serializeFolder, serializeMailbox,
 } from './lib/ui-compat.js';
 import { buildSearch } from './lib/search.js';
+import { htmlToPlainText } from './lib/html.js';
 import { createAdminAuth, requireAdminRole } from './lib/admin-auth.js';
 import { createSessionStore, registerProductionWeb } from './lib/production-web.js';
 
@@ -943,23 +944,31 @@ app.post('/api/v1/mailboxes/:mailboxId/threads/:threadId/read', async (req, res)
 // ---------- Drafts ----------
 app.post('/api/v1/mailboxes/:mailboxId/drafts', async (req, res) => {
   const { mailboxId } = req.params;
-  const { to, subject, body, in_reply_to, thread_id, draft_id } = req.body;
-  const id = uuidv4();
+  const { to, subject, body, in_reply_to, thread_id } = req.body;
+  // Saving again with draft_id updates that draft instead of adding another.
+  const updating = Boolean(req.body.draft_id);
+  const id = updating ? readNullableUuid(req.body, 'draft_id') : uuidv4();
   const { rows: mbRows } = await query('SELECT email FROM mailboxes WHERE id = $1', [mailboxId]);
   const senderEmail = mbRows[0]?.email || mailboxId;
+  // The editor sends HTML; the plain text is what lists and search show.
+  const content = [subject || '', senderEmail, (to || '').toLowerCase(), body || '', htmlToPlainText(body), in_reply_to || null];
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows: draftRows } = await client.query('SELECT id FROM folders WHERE mailbox_id = $1 AND slug = $2', [mailboxId, 'draft']);
     const folderId = draftRows[0]?.id;
     if (!folderId) throw new Error('Draft folder not found');
-    await client.query(
-      `INSERT INTO emails (id, mailbox_id, folder_id, thread_id, subject, sender, recipient, body_html, body_text, in_reply_to, is_draft)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true)`,
-      [id, mailboxId, folderId, thread_id || id, subject || '', senderEmail, (to || '').toLowerCase(), body || '', body || '', in_reply_to || null],
-    );
-    if (draft_id) {
-      await client.query('DELETE FROM emails WHERE id = $1 AND mailbox_id = $2 AND is_draft = true', [draft_id, mailboxId]);
+    const saved = updating
+      ? await client.query(
+        `UPDATE emails SET subject=$2, sender=$3, recipient=$4, body_html=$5, body_text=$6, in_reply_to=$7, updated_at=now()
+         WHERE id=$1 AND mailbox_id=$8 AND is_draft=true RETURNING id`, [id, ...content, mailboxId])
+      : await client.query(
+        `INSERT INTO emails (id, mailbox_id, folder_id, thread_id, subject, sender, recipient, body_html, body_text, in_reply_to, is_draft)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true) RETURNING id`,
+        [id, mailboxId, folderId, thread_id || id, ...content]);
+    if (!saved.rowCount) {
+      await client.query('ROLLBACK');
+      return sendError(res, 404, 'Draft not found');
     }
     await client.query('COMMIT');
   } catch (e) {

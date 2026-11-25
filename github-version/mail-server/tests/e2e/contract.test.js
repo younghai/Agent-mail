@@ -235,6 +235,21 @@ test('a saved draft comes back with its body', { skip }, async () => {
   assert.deepEqual([drafts[0].id, drafts[0].is_draft], [saved.body.data.id, true]);
 });
 
+test('saving a draft again updates it instead of adding one, and its text stays plain', { skip }, async () => {
+  const base = `/api/v1/mailboxes/${await createMailbox()}`;
+  const save = (body) => call(`${base}/drafts`, { method: 'POST', body });
+  const first = await save({ to: 'someone@example.test', subject: 'Draft A', body: '<p>First&nbsp;version</p>' });
+  const second = await save({ to: 'someone@example.test', subject: 'Draft A', body: '<p>Second version</p>', draft_id: first.body.data.id });
+  assert.equal(second.status, 200);
+  assert.equal(second.body.data.id, first.body.data.id, 'the draft keeps its id');
+  const drafts = (await call(`${base}/emails?folder=draft`)).body.data.emails;
+  assert.deepEqual(drafts.map((row) => [row.id, row.snippet]), [[first.body.data.id, 'Second version']], 'one draft, plain snippet');
+  const draft = (await call(`${base}/emails/${first.body.data.id}`)).body.data;
+  assert.deepEqual([draft.body, draft.body_text], ['<p>Second version</p>', 'Second version']);
+  assert.equal((await save({ subject: 'x', body: 'x', draft_id: randomUUID() })).status, 404);
+  assert.equal((await save({ subject: 'x', body: 'x', draft_id: 'not-a-uuid' })).status, 400);
+});
+
 test('the inbox list can be limited to unread emails', { skip }, async () => {
   const base = await seededMailbox();
   const { id } = (await inbox(base))[0];

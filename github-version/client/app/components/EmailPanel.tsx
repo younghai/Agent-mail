@@ -210,7 +210,7 @@ function EmailAgentResults({
 						<div className="mt-3 space-y-0">
 							{timeline.map((msg, idx) => {
 								type EM = Email & { email_date?: string; received_at?: string };
-								const isDraft = msg.folder_id === Folders.DRAFT;
+								const isDraft = Boolean(msg.is_draft);
 								const isSent = msg.sender === mailboxEmail;
 								const dirLabel = isDraft ? "Draft" : isSent ? "발신" : "수신";
 								const dotColor = isDraft ? "border-kumo-destructive" : isSent ? "border-kumo-subtle" : "border-kumo-brand";
@@ -382,7 +382,7 @@ else if (allMessages.length > 1) setExpandedMessages(new Set([allMessages[0].id]
 
 	const draftMessageIds = useMemo(() => {
 		const ids = new Set<string>();
-		for (const msg of allMessages) { if (msg.folder_id === Folders.DRAFT) ids.add(msg.id); else if (isDraftFolder && msg.id === emailId) ids.add(msg.id); }
+		for (const msg of allMessages) { if (msg.is_draft) ids.add(msg.id); else if (isDraftFolder && msg.id === emailId) ids.add(msg.id); }
 		return ids;
 	}, [allMessages, isDraftFolder, emailId]);
 
@@ -420,6 +420,7 @@ else if (allMessages.length > 1) setExpandedMessages(new Set([allMessages[0].id]
 	const handleSendDraft = async (draftMsg?: Email) => {
 		let target = draftMsg || email;
 		if (!mailboxId || !currentMailbox) return;
+		if (!capabilities.sendMail) { toastManager.add({ title: "이 환경에서는 메일을 보낼 수 없습니다. 초안으로 저장되어 있습니다.", variant: "error" }); return; }
 		setIsSending(true);
 		try {
 			if (!target.recipient || !target.subject) { try { const fresh = await api.getEmail(mailboxId, target.id) as Email; if (fresh) target = fresh; } catch {} }

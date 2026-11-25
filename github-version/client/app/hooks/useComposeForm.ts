@@ -202,9 +202,14 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 	const isNewCompose = !composeOptions.draftEmail && !composeOptions.originalEmail;
 	const autosaveDraftId = composeOptions.draftEmail?.id;
 
+	// The server row this composer writes to: the draft being edited, or the one
+	// its first Save creates. Every later Save updates that row instead of adding one.
+	const draftIdRef = useRef<string | null>(null);
+
 	useEffect(() => {
 		if (lastInitializedOptionsRef.current === composeOptions) return;
 		lastInitializedOptionsRef.current = composeOptions;
+		draftIdRef.current = composeOptions.draftEmail?.id ?? null;
 
 		const initialFields = buildInitialComposeFields(
 			composeOptions,
@@ -239,7 +244,7 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 	const handleSaveDraft = async () => {
 		if (!mailboxId || isSending) return; setIsSavingDraft(true); setError(null);
 		try {
-			await saveDraftMutation.mutateAsync({ mailboxId, draft: {
+			const saved = await saveDraftMutation.mutateAsync({ mailboxId, draft: {
 				to,
 				cc: cc || undefined,
 				bcc: bcc || undefined,
@@ -247,8 +252,9 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 				body,
 				in_reply_to: composeOptions.originalEmail?.id || composeOptions.draftEmail?.in_reply_to || undefined,
 				thread_id: composeOptions.originalEmail?.thread_id || composeOptions.draftEmail?.thread_id || undefined,
-				draft_id: composeOptions.draftEmail?.id || undefined,
+				draft_id: draftIdRef.current || undefined,
 			} });
+			draftIdRef.current = saved.id;
 			if (isNewCompose) clearAutosave(mailboxId, autosaveDraftId);
 			toastManager.add({ title: "Draft saved!" });
 		}
@@ -279,7 +285,7 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 			html: body,
 			text: htmlToPlainText(body),
 		};
-		const draftId = composeOptions.draftEmail?.id; const mode = composeOptions.mode; const originalId = composeOptions.originalEmail?.id || composeOptions.draftEmail?.in_reply_to;
+		const draftId = draftIdRef.current; const mode = composeOptions.mode; const originalId = composeOptions.originalEmail?.id || composeOptions.draftEmail?.in_reply_to;
 		setIsSending(true); toastManager.add({ title: "Sending email..." });
 		try {
 			if ((mode === "reply" || mode === "reply-all") && originalId) await replyMutation.mutateAsync({ mailboxId, emailId: originalId, email: emailData });

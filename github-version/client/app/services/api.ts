@@ -12,7 +12,6 @@ import type {
 	Email,
 	Folder,
 	Mailbox,
-	Template,
 } from "~/types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -198,7 +197,7 @@ const api = {
 			thread_id?: string;
 			draft_id?: string;
 		},
-	) => post<{ draft_id: string }>(`/api/v1/mailboxes/${mailboxId}/drafts`, draft),
+	) => post<{ id: string }>(`/api/v1/mailboxes/${mailboxId}/drafts`, draft),
 	replyToEmail: (mailboxId: string, emailId: string, email: unknown) =>
 		post<void>(`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/reply`, email),
 	forwardEmail: (mailboxId: string, emailId: string, email: unknown) =>
@@ -213,23 +212,6 @@ const api = {
 		put<Folder>(`/api/v1/mailboxes/${mailboxId}/folders/${id}`, { name }),
 	deleteFolder: (mailboxId: string, id: string) =>
 		del<void>(`/api/v1/mailboxes/${mailboxId}/folders/${id}`),
-
-	// Templates
-	listTemplates: (mailboxId: string) =>
-		get<Template[]>(`/api/v1/mailboxes/${mailboxId}/templates`),
-	createTemplate: (
-		mailboxId: string,
-		input: { name: string; subject?: string | null; body: string },
-	) => post<Template>(`/api/v1/mailboxes/${mailboxId}/templates`, input),
-	updateTemplate: (
-		mailboxId: string,
-		id: string,
-		patch: { name?: string; subject?: string | null; body?: string },
-	) => put<Template>(`/api/v1/mailboxes/${mailboxId}/templates/${id}`, patch),
-	deleteTemplate: (mailboxId: string, id: string) =>
-		del<void>(`/api/v1/mailboxes/${mailboxId}/templates/${id}`),
-	touchTemplate: (mailboxId: string, id: string) =>
-		post<void>(`/api/v1/mailboxes/${mailboxId}/templates/${id}/touch`, {}),
 
 	// Agent feedback
 	recordAgentFeedback: (

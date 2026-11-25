@@ -2,15 +2,6 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-export interface Template {
-	id: string;
-	name: string;
-	subject?: string | null;
-	body: string;
-	created_at: string;
-	updated_at: string;
-}
-
 export interface SignatureSettings {
 	enabled: boolean;
 	text: string;
@@ -40,6 +31,8 @@ export interface Email {
 	id: string;
 	thread_id?: string | null;
 	folder_id?: string | null;
+	/** Saved but not sent. Folder ids are UUIDs, so this is how a draft is recognised. */
+	is_draft?: boolean;
 	subject: string;
 	sender: string;
 	recipient: string;
