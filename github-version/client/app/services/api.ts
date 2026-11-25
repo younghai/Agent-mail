@@ -19,16 +19,24 @@ const REQUEST_TIMEOUT_MS = 30_000;
 
 export class ApiError extends Error {
 	status: number;
+	code: string;
 	body: Record<string, unknown>;
 
 	constructor(status: number, body: Record<string, unknown>) {
-super(typeof body.error === "string" ? body.error :
-  (body.error && typeof body.error === "object" && "message" in body.error)
-    ? String(body.error.message) : `Request failed: ${status}`);
+		const detail = body.error && typeof body.error === "object" ? (body.error as Record<string, unknown>) : {};
+		super(typeof body.error === "string" ? body.error :
+			"message" in detail ? String(detail.message) : `Request failed: ${status}`);
 		this.name = "ApiError";
 		this.status = status;
+		this.code = typeof detail.code === "string" ? detail.code : "";
 		this.body = body;
 	}
+}
+
+// Error bodies arrive in more than one shape ({error}, {success, error: {code, message}}); never trust their type.
+async function readJsonBody(response: Response): Promise<Record<string, unknown>> {
+	const body = await response.json().catch(() => null);
+	return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
 }
 
 export async function request<T>(
@@ -62,11 +70,11 @@ export async function request<T>(
 		});
 
 		if (!res.ok) {
-			const body = await res.json().catch(() => ({}));
-if (res.status === 401 && body?.error?.code === "LOGIN_REQUIRED" && typeof window !== "undefined") {
-window.location.assign("/auth/login");
-}
-			throw new ApiError(res.status, body as Record<string, unknown>);
+			const error = new ApiError(res.status, await readJsonBody(res));
+			if (error.status === 401 && error.code === "LOGIN_REQUIRED" && typeof window !== "undefined") {
+				window.location.assign("/auth/login");
+			}
+			throw error;
 		}
 
 		if (res.status === 204) return undefined as T;

@@ -12,6 +12,22 @@ jobs:
   production:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agentmail_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/agentmail_test
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -47,11 +63,16 @@ jobs:
       - name: Install fixed dependencies
         run: pnpm --dir github-version install --frozen-lockfile
 
-      - name: Test Mail Server
-        run: pnpm --dir github-version test
+      - name: Typecheck client
+        run: pnpm --dir github-version typecheck
 
       - name: Check production scripts
         run: bash -n github-version/scripts/build-replit.sh github-version/scripts/start-production.sh
 
       - name: Build Replit production client
         run: bash github-version/scripts/build-replit.sh
+
+      # Last, because the contract tests boot the real server: the production
+      # launcher serves this SPA build and the tests use the PostgreSQL service.
+      - name: Test Mail Server and client
+        run: pnpm --dir github-version test

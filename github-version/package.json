@@ -7,7 +7,7 @@
     "build": "pnpm --filter @agent-mail/client build",
     "dev": "scripts/start-local.sh",
     "start": "scripts/start-local.sh",
-    "test": "pnpm --filter agentic-inbox-mail-server test",
+    "test": "pnpm --filter agentic-inbox-mail-server test && pnpm --filter @agent-mail/client test",
     "typecheck": "pnpm --filter @agent-mail/client typecheck",
     "dev:api": "pnpm --dir mail-server run dev",
     "dev:client": "pnpm --dir client run dev --host 0.0.0.0 --port 5000"
