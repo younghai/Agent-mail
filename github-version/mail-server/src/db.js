@@ -39,3 +39,20 @@ export async function query(text, params) {
   }
   return res;
 }
+
+// Runs `run` on one connection inside a transaction: its statements are kept
+// together or not at all. `tx` has the same signature as `query`.
+export async function withTransaction(run) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await run((text, params) => client.query(text, params));
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}

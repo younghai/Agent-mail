@@ -2,7 +2,7 @@ import express from 'express';
 import { fileURLToPath } from 'node:url';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
-import { initDb, query, pool } from './db.js';
+import { initDb, query, pool, withTransaction } from './db.js';
 import { publishEmailEvent } from './redis.js';
 import { deleteObject, presignGetUrl } from './storage.js';
 import {
@@ -228,8 +228,9 @@ function parseAgentUsagePayload(rawBody) {
   };
 }
 
-async function audit(entityType, entityId, action, actor, before, after) {
-  await query(
+// `db` is the transaction a caller is already inside, so the audit row commits with the change it describes.
+async function audit(entityType, entityId, action, actor, before, after, db = query) {
+  await db(
     `INSERT INTO admin_audit_logs (entity_type, entity_id, action, actor_email, actor_role, before_json, after_json)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [entityType, entityId, action, actor.email, actor.role, before ? JSON.stringify(before) : null, after ? JSON.stringify(after) : null]
@@ -536,13 +537,16 @@ app.post('/api/v1/admin/clients', async (req, res) => {
   const actor = requireAdminRole(req, res, ['admin', 'manager']);
   if (!actor) return;
   const { name, company, email, owner, status, tags, notes } = parseClientPayload(req.body);
-  const { rows } = await query(
-    `INSERT INTO admin_clients (name, company, email, owner, status, tags, notes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-    [name, company, email, owner, status, JSON.stringify(tags), notes]
-  );
-  const client = clientToApi(rows[0]);
-  await audit('client', client.id, 'create', actor, null, client);
+  const client = await withTransaction(async (tx) => {
+    const { rows } = await tx(
+      `INSERT INTO admin_clients (name, company, email, owner, status, tags, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [name, company, email, owner, status, JSON.stringify(tags), notes]
+    );
+    const created = clientToApi(rows[0]);
+    await audit('client', created.id, 'create', actor, null, created, tx);
+    return created;
+  });
   res.status(201).json({ success: true, data: client });
 });
 
@@ -552,13 +556,16 @@ app.put('/api/v1/admin/clients/:clientId', async (req, res) => {
   const beforeRows = await query('SELECT * FROM admin_clients WHERE id = $1', [req.params.clientId]);
   if (!beforeRows.rows.length) return sendError(res, 404, 'Client not found');
   const { name, company, email, owner, status, tags, notes } = parseClientPayload(req.body);
-  const { rows } = await query(
-    `UPDATE admin_clients SET name = $1, company = $2, email = $3, owner = $4, status = $5, tags = $6, notes = $7, updated_at = now()
-     WHERE id = $8 RETURNING *`,
-    [name, company, email, owner, status, JSON.stringify(tags), notes, req.params.clientId]
-  );
-  const client = clientToApi(rows[0]);
-  await audit('client', client.id, 'update', actor, clientToApi(beforeRows.rows[0]), client);
+  const client = await withTransaction(async (tx) => {
+    const { rows } = await tx(
+      `UPDATE admin_clients SET name = $1, company = $2, email = $3, owner = $4, status = $5, tags = $6, notes = $7, updated_at = now()
+       WHERE id = $8 RETURNING *`,
+      [name, company, email, owner, status, JSON.stringify(tags), notes, req.params.clientId]
+    );
+    const updated = clientToApi(rows[0]);
+    await audit('client', updated.id, 'update', actor, clientToApi(beforeRows.rows[0]), updated, tx);
+    return updated;
+  });
   res.json({ success: true, data: client });
 });
 
@@ -604,24 +611,23 @@ app.post('/api/v1/admin/tasks', async (req, res) => {
   const actor = requireAdminRole(req, res, ['admin', 'manager', 'operator']);
   if (!actor) return;
   const { clientId, title, type, status, priority, owner, dueDate, completion, mailboxId, requestEmailId, issue, notes } = parseTaskPayload(req.body);
-  try {
-    const { rows } = await query(
+  const task = await withTransaction(async (tx) => {
+    const { rows } = await tx(
       `INSERT INTO admin_tasks (client_id, title, type, status, priority, owner, due_date, completion, mailbox_id, request_email_id, issue, notes)
        VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::date, $8, NULLIF($9, '')::uuid, NULLIF($10, '')::uuid, $11, $12)
        RETURNING *`,
       [clientId, title, type, status, priority, owner, dueDate || '', completion, mailboxId || '', requestEmailId || '', issue, notes]
     );
-    const task = taskToApi(rows[0]);
-    await query(
+    const created = taskToApi(rows[0]);
+    await tx(
       `INSERT INTO admin_task_events (task_id, event_type, to_status, actor_email, actor_role, metadata)
        VALUES ($1, 'create', $2, $3, $4, $5)`,
-      [task.id, task.status, actor.email, actor.role, JSON.stringify({ completion: task.completion })]
+      [created.id, created.status, actor.email, actor.role, JSON.stringify({ completion: created.completion })]
     );
-    await audit('task', task.id, 'create', actor, null, task);
-    res.status(201).json({ success: true, data: task });
-  } catch (e) {
-    sendError(res, 400, e.message);
-  }
+    await audit('task', created.id, 'create', actor, null, created, tx);
+    return created;
+  });
+  res.status(201).json({ success: true, data: task });
 });
 
 app.put('/api/v1/admin/tasks/:taskId', async (req, res) => {
@@ -631,27 +637,26 @@ app.put('/api/v1/admin/tasks/:taskId', async (req, res) => {
   if (!beforeRows.rows.length) return sendError(res, 404, 'Task not found');
   const before = taskToApi(beforeRows.rows[0]);
   const { clientId, title, type, status, priority, owner, dueDate, completion, mailboxId, requestEmailId, issue, notes } = parseTaskPayload(req.body);
-  try {
-    const { rows } = await query(
+  const task = await withTransaction(async (tx) => {
+    const { rows } = await tx(
       `UPDATE admin_tasks SET client_id = $1, title = $2, type = $3, status = $4, priority = $5, owner = $6,
        due_date = NULLIF($7, '')::date, completion = $8, mailbox_id = NULLIF($9, '')::uuid,
        request_email_id = NULLIF($10, '')::uuid, issue = $11, notes = $12, updated_at = now()
        WHERE id = $13 RETURNING *`,
       [clientId, title, type, status, priority, owner, dueDate || '', completion, mailboxId || '', requestEmailId || '', issue, notes, req.params.taskId]
     );
-    const task = taskToApi(rows[0]);
-    if (before.status !== task.status) {
-      await query(
+    const updated = taskToApi(rows[0]);
+    if (before.status !== updated.status) {
+      await tx(
         `INSERT INTO admin_task_events (task_id, event_type, from_status, to_status, actor_email, actor_role, metadata)
          VALUES ($1, 'status_change', $2, $3, $4, $5, $6)`,
-        [task.id, before.status, task.status, actor.email, actor.role, JSON.stringify({ completion: task.completion })]
+        [updated.id, before.status, updated.status, actor.email, actor.role, JSON.stringify({ completion: updated.completion })]
       );
     }
-    await audit('task', task.id, 'update', actor, before, task);
-    res.json({ success: true, data: task });
-  } catch (e) {
-    sendError(res, 400, e.message);
-  }
+    await audit('task', updated.id, 'update', actor, before, updated, tx);
+    return updated;
+  });
+  res.json({ success: true, data: task });
 });
 
 app.post('/api/v1/admin/requests/from-email', async (req, res) => {
@@ -661,61 +666,68 @@ app.post('/api/v1/admin/requests/from-email', async (req, res) => {
   const { rows: emailRows } = await query('SELECT * FROM emails WHERE mailbox_id = $1 AND id = $2', [mailboxId, emailId]);
   if (!emailRows.length) return sendError(res, 404, 'Email not found');
   const email = emailRows[0];
-
-  const { rows: existingTaskRows } = await query(
-    `SELECT * FROM admin_tasks
-     WHERE mailbox_id = $1 AND request_email_id = $2
-     ORDER BY updated_at DESC
-     LIMIT 1`,
-    [mailboxId, emailId],
-  );
-  if (existingTaskRows.length) {
-    return res.json({
-      success: true,
-      data: taskToApi(existingTaskRows[0]),
-      meta: { created: false, idempotent: true },
-    });
-  }
-
-  let resolvedClientId = clientId;
-  if (!resolvedClientId) {
-    const senderDomain = String(email.sender || '').split('@')[1] || 'unknown.local';
-    const company = senderDomain.split('.')[0] || senderDomain;
-    const { rows: existing } = await query(
-      `SELECT * FROM admin_clients WHERE LOWER(email) = LOWER($1) OR LOWER(company) = LOWER($2) LIMIT 1`,
-      [email.sender || '', company]
+  const existingTask = async () => {
+    const { rows } = await query(
+      `SELECT * FROM admin_tasks
+       WHERE mailbox_id = $1 AND request_email_id = $2
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [mailboxId, emailId],
     );
-    if (existing.length) {
-      resolvedClientId = existing[0].id;
-    } else {
-      const { rows: created } = await query(
-        `INSERT INTO admin_clients (name, company, email, owner, status, tags, notes)
-         VALUES ($1, $2, $3, $4, 'active', '[]', 'Created from inbound email') RETURNING *`,
-        [company, company, email.sender || '', owner]
-      );
-      const client = clientToApi(created[0]);
-      resolvedClientId = client.id;
-      await audit('client', client.id, 'create_from_email', actor, null, client);
-    }
-  }
+    return rows[0] ? taskToApi(rows[0]) : null;
+  };
+  const existing = await existingTask();
+  if (existing) return res.json({ success: true, data: existing, meta: { created: false, idempotent: true } });
 
   const bodyText = String(email.body_text || '').replace(/\s+/g, ' ').trim();
   const title = email.subject || bodyText.slice(0, 80) || 'Email request';
   const issue = bodyText.slice(0, 240);
-  const { rows } = await query(
-    `INSERT INTO admin_tasks (client_id, title, type, status, priority, owner, completion, mailbox_id, request_email_id, issue, notes)
-     VALUES ($1, $2, 'request', 'triaged', 'normal', $3, 0, $4, $5, $6, $7)
-     RETURNING *`,
-    [resolvedClientId, title, owner, mailboxId, emailId, issue, `Created from email ${emailId}`]
-  );
-  const task = taskToApi(rows[0]);
-  await query(
-    `INSERT INTO admin_task_events (task_id, event_type, to_status, actor_email, actor_role, metadata)
-     VALUES ($1, 'create_from_email', $2, $3, $4, $5)`,
-    [task.id, task.status, actor.email, actor.role, JSON.stringify({ mailboxId, emailId })]
-  );
-  await audit('task', task.id, 'create_from_email', actor, null, task);
-  res.status(201).json({ success: true, data: task });
+  try {
+    const task = await withTransaction(async (tx) => {
+      let resolvedClientId = clientId;
+      if (!resolvedClientId) {
+        const senderDomain = String(email.sender || '').split('@')[1] || 'unknown.local';
+        const company = senderDomain.split('.')[0] || senderDomain;
+        const { rows } = await tx(
+          `SELECT * FROM admin_clients WHERE LOWER(email) = LOWER($1) OR LOWER(company) = LOWER($2) LIMIT 1`,
+          [email.sender || '', company]
+        );
+        if (rows.length) {
+          resolvedClientId = rows[0].id;
+        } else {
+          const { rows: created } = await tx(
+            `INSERT INTO admin_clients (name, company, email, owner, status, tags, notes)
+             VALUES ($1, $2, $3, $4, 'active', '[]', 'Created from inbound email') RETURNING *`,
+            [company, company, email.sender || '', owner]
+          );
+          const client = clientToApi(created[0]);
+          resolvedClientId = client.id;
+          await audit('client', client.id, 'create_from_email', actor, null, client, tx);
+        }
+      }
+      const { rows } = await tx(
+        `INSERT INTO admin_tasks (client_id, title, type, status, priority, owner, completion, mailbox_id, request_email_id, issue, notes)
+         VALUES ($1, $2, 'request', 'triaged', 'normal', $3, 0, $4, $5, $6, $7)
+         RETURNING *`,
+        [resolvedClientId, title, owner, mailboxId, emailId, issue, `Created from email ${emailId}`]
+      );
+      const created = taskToApi(rows[0]);
+      await tx(
+        `INSERT INTO admin_task_events (task_id, event_type, to_status, actor_email, actor_role, metadata)
+         VALUES ($1, 'create_from_email', $2, $3, $4, $5)`,
+        [created.id, created.status, actor.email, actor.role, JSON.stringify({ mailboxId, emailId })]
+      );
+      await audit('task', created.id, 'create_from_email', actor, null, created, tx);
+      return created;
+    });
+    return res.status(201).json({ success: true, data: task });
+  } catch (error) {
+    // A concurrent request for the same email got there first; the unique index kept it to one task.
+    if (error.code !== '23505') throw error;
+    const winner = await existingTask();
+    if (!winner) throw error;
+    return res.json({ success: true, data: winner, meta: { created: false, idempotent: true } });
+  }
 });
 
 app.post('/api/v1/admin/agent-usage', async (req, res) => {
@@ -1256,13 +1268,21 @@ app.get('/ready', async (req, res) => {
 });
 
 // ---------- Global Error Handler ----------
+// Postgres's own words for two caller mistakes; anything else it raises is the server's.
+const CALLER_MISTAKES = {
+  23503: [400, 'REFERENCED_NOT_FOUND', 'Referenced record not found'],
+  23505: [409, 'ALREADY_EXISTS', 'A matching record already exists'],
+};
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, _next) => {
-  const status = err.status || err.statusCode || 500;
+  const [mistakeStatus, mistakeCode, mistakeMessage] = CALLER_MISTAKES[err.code] || [];
+  const status = err.status || err.statusCode || mistakeStatus || 500;
+  // What the caller did wrong is spelled out; server faults keep their details out of the response.
   const message = err.code === 'STORAGE_NOT_CONFIGURED' ? '첨부파일용 영구 저장소가 아직 연결되지 않았습니다.' :
-    NODE_ENV === 'production' ? 'Internal server error' : (err.message || 'Unknown error');
+    mistakeMessage || (NODE_ENV === 'production' && status >= 500 ? 'Internal server error' : (err.message || 'Unknown error'));
+  const code = err.status || err.statusCode ? (err.code || 'ERROR') : (mistakeCode || 'INTERNAL_ERROR');
   console.error(`[${req.method}] ${req.path} →`, err);
-  res.status(status).json({ success: false, error: { code: err.code || 'INTERNAL_ERROR', message } });
+  res.status(status).json({ success: false, error: { code, message } });
 });
 
 process.on('unhandledRejection', (reason) => {

@@ -322,3 +322,45 @@ test('the development seed is one script that counts what it inserts and fails l
     await pool.end();
   }
 });
+
+test('admin writes are all-or-nothing, and one email becomes one task even when requests race', { skip }, async () => {
+  const base = await seededMailbox();
+  const mailboxId = base.split('/').pop();
+  const [first, second, third] = await inbox(base);
+  const fromEmail = (email) => call('/api/v1/admin/requests/from-email', { method: 'POST', body: { mailboxId, emailId: email.id } });
+  const tasksFor = async () => (await call('/api/v1/admin/tasks')).body.data.filter((task) => task.mailboxId === mailboxId);
+
+  const created = await fromEmail(first);
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const again = await fromEmail(first);
+  assert.deepEqual([again.status, again.body.data.id, again.body.meta],
+    [200, created.body.data.id, { created: false, idempotent: true }], 'asking again returns the task that exists');
+  // The unique index, not a lookup before the insert, is what keeps this to one task.
+  const raced = await Promise.all([fromEmail(second), fromEmail(second)]);
+  assert.deepEqual(raced.map((response) => response.status).sort(), [200, 201]);
+  assert.equal((await tasksFor()).length, 2);
+  const detail = (await call(`/api/v1/admin/tasks/${created.body.data.id}`)).body.data;
+  assert.deepEqual([detail.events.length, detail.audits.length], [1, 1]);
+  assert.equal(detail.email.id, first.id, 'the task detail carries the request email');
+
+  // Make the last statement of a task write fail: nothing from that write may remain.
+  const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 1 });
+  const clientId = (await call('/api/v1/admin/clients', { method: 'POST', body: { name: 'Probe', company: 'Probe Co' } })).body.data.id;
+  const task = { clientId, title: 'probe-rollback', type: 'task', status: 'new', priority: 'normal', owner: '', dueDate: '', completion: 0, issue: '', notes: '' };
+  try {
+    await pool.query(`ALTER TABLE admin_audit_logs ADD CONSTRAINT contract_probe_reject
+      CHECK (after_json->>'title' IS DISTINCT FROM 'probe-rollback')`);
+    const failed = await call('/api/v1/admin/tasks', { method: 'POST', body: task });
+    assert.equal(failed.status, 500);
+    assert.equal((await tasksFor()).filter((row) => row.title === 'probe-rollback').length, 0, 'the task is not left behind');
+  } finally {
+    await pool.query('ALTER TABLE admin_audit_logs DROP CONSTRAINT IF EXISTS contract_probe_reject');
+    await pool.end();
+  }
+  // A write that names a record which does not exist is the caller's mistake, not a server fault.
+  const orphan = await call('/api/v1/admin/tasks', { method: 'POST', body: { ...task, title: 'orphan', clientId: randomUUID() } });
+  assert.deepEqual([orphan.status, orphan.body.error.code, orphan.body.error.message], [400, 'REFERENCED_NOT_FOUND', 'Referenced record not found']);
+  const before = (await tasksFor()).length;
+  assert.equal((await call('/api/v1/admin/clients', { method: 'POST', body: { name: 'Third', company: 'Third Co' } })).status, 201);
+  assert.equal((await tasksFor()).length, before);
+});

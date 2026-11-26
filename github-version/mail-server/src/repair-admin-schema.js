@@ -34,7 +34,6 @@ const statements = [
   )`,
   'CREATE INDEX IF NOT EXISTS idx_admin_tasks_client_status ON admin_tasks(client_id, status)',
   'CREATE INDEX IF NOT EXISTS idx_admin_tasks_status_due ON admin_tasks(status, due_date)',
-  'CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_tasks_mailbox_email_once ON admin_tasks(mailbox_id, request_email_id) WHERE mailbox_id IS NOT NULL AND request_email_id IS NOT NULL',
   `CREATE TABLE IF NOT EXISTS admin_task_events (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     task_id UUID NOT NULL REFERENCES admin_tasks(id) ON DELETE CASCADE,
