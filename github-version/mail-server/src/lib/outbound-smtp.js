@@ -5,7 +5,7 @@ let _transporter = null;
 /**
  * .env 또는 DB smtp_config에서 읽은 설정으로 transporter 생성.
  */
-export function createTransporter(config) {
+function createTransporter(config) {
   return nodemailer.createTransport({
     host: config.host,
     port: config.port || 587,

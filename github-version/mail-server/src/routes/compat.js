@@ -1,18 +1,3 @@
-export const compatRoutePaths = [
-  'POST /api/v1/mailboxes/:mailboxId/emails/:id/reply',
-  'POST /api/v1/mailboxes/:mailboxId/emails/:id/forward',
-  'POST /api/v1/mailboxes/:mailboxId/agent-feedback',
-  'DELETE /api/v1/mailboxes/:mailboxId/agent-feedback/:callId/:score',
-  'GET /api/v1/mailboxes/:mailboxId/agent-feedback/summary',
-  'GET /api/v1/mailboxes/:mailboxId/approvals',
-  'POST /api/v1/mailboxes/:mailboxId/drafts/:emailId/approval',
-  'GET /api/v1/admin/cost/daily',
-  'GET /api/v1/admin/cost/monthly',
-  'GET /api/v1/admin/cost/models',
-  'GET /api/v1/mailboxes/:mailboxId/segments',
-  'GET /api/v1/mailboxes/:mailboxId/admin/sla',
-];
-
 function numberParam(value, fallback, max) {
   const n = Number.parseInt(String(value || ''), 10);
   if (!Number.isFinite(n) || n <= 0) return fallback;
