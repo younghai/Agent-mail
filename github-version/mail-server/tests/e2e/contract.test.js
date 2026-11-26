@@ -399,13 +399,19 @@ test('an id that is not a UUID names nothing: 404, not a server fault', { skip }
 
 // What the client calls, read from the client's own sources: every /api/v1 URL
 // literal, with the method of the call around it. Add an API function to the
-// client and this list grows with it.
+// client and this list grows with it. It reads literals, so a URL assembled
+// from parts elsewhere would not be seen.
 const METHOD_OF = { get: 'GET', post: 'POST', put: 'PUT', del: 'DELETE' };
 function clientRoutes() {
   const read = (file) => readFileSync(new URL(`../../../client/app/${file}`, import.meta.url), 'utf8');
   const shape = (url) => url.replace(/\$\{[^}]*\}/g, ':x');
-  const literals = (text) => [...text.matchAll(/([`"'])(\/api\/v1\/[^`"']*)\1/g)];
+  // A quoted literal holding an /api/v1 path, possibly after a `${base}` prefix.
+  const literals = (text) => [...text.matchAll(/([`"'])(?:\$\{[^}]*\})?(\/api\/v1\/[^`"']*)\1/g)];
+  // The method stated right after a literal: json("POST" in the campaign service, method: "POST" in a raw fetch.
+  // Assumed to sit within 200 characters of it, on the same statement.
+  const statedAfter = (text, at) => text.slice(at, at + 200).match(/json\("(\w+)"|method:\s*["'](\w+)["']/);
   const routes = new Set();
+
   const api = read('services/api.ts');
   for (const match of literals(api)) {
     const before = api.slice(0, match.index);
@@ -416,17 +422,28 @@ function clientRoutes() {
   for (const file of ['routes/home.tsx', 'components/AgentPanel.tsx', 'lib/utils.ts']) {
     const text = read(file);
     for (const match of literals(text)) {
-      const sent = text.slice(match.index, match.index + 200).match(/method:\s*["'](POST|PUT|DELETE)["']/);
-      routes.add(`${sent ? sent[1] : 'GET'} ${shape(match[2])}`);
+      const stated = statedAfter(text, match.index);
+      routes.add(`${stated ? stated[1] || stated[2] : 'GET'} ${shape(match[2])}`);
     }
   }
-  // The campaign service builds its URLs through a helper, so its routes are named here.
+
+  // The campaign service builds its URLs through a helper. A bare call is the workspace
+  // itself; `${path(...)}/x` is one of its operations.
   const campaign = read('services/campaign-demo.ts');
-  assert.match(campaign, /demo-campaigns\/seed`/);
-  assert.match(campaign, /campaign-workspace`/);
-  routes.add('POST /api/v1/mailboxes/:x/demo-campaigns/seed');
-  for (const method of ['GET', 'PUT']) routes.add(`${method} /api/v1/mailboxes/:x/emails/:x/campaign-workspace`);
-  for (const operation of ['reply', 'campaign']) routes.add(`POST /api/v1/mailboxes/:x/emails/:x/campaign-workspace/${operation}`);
+  const definition = literals(campaign).find((match) => match[2].endsWith('/campaign-workspace'));
+  assert.ok(definition, 'the campaign service still defines its workspace path as a literal');
+  for (const match of literals(campaign)) {
+    if (match === definition) continue;
+    const stated = statedAfter(campaign, match.index);
+    routes.add(`${stated ? stated[1] || stated[2] : 'GET'} ${shape(match[2])}`);
+  }
+  for (const call of campaign.matchAll(/path\(mailboxId, emailId\)/g)) {
+    const after = campaign.slice(call.index + call[0].length);
+    const line = after.slice(0, after.indexOf('\n'));
+    const suffix = campaign[call.index - 1] === '{' ? line.slice(line.indexOf('}') + 1, line.indexOf('`')) : '';
+    const stated = line.match(/json\("(\w+)"/);
+    routes.add(`${stated ? stated[1] : 'GET'} ${shape(definition[2])}${shape(suffix)}`);
+  }
   return routes;
 }
 
