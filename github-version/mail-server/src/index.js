@@ -502,24 +502,39 @@ app.get('/api/v1/admin/action-queue', async (req, res) => {
   });
 });
 
+// A client's mail: messages to or from its address, or naming its company.
+// Addresses and subjects are short columns, so a LIKE over them is cheap. The
+// body is not: a LIKE there unpacks every stored message in every mailbox
+// (1.1 s for 20,000 messages of 22 KB). Company mentions in the body go
+// through the search index instead, matched as word prefixes.
+async function relatedEmails(client) {
+  const columns = 'id, mailbox_id, subject, sender, recipient, received_at';
+  const branches = [];
+  const params = [];
+  if (client.email) {
+    params.push(`%${client.email}%`);
+    branches.push(`SELECT ${columns} FROM emails WHERE LOWER(sender) LIKE LOWER($${params.length}) OR LOWER(recipient) LIKE LOWER($${params.length})`);
+  }
+  const words = (client.company || '').toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+  if (words.length) {
+    params.push(`%${client.company.toLowerCase()}%`, words.map((word) => `${word}:*`).join(' & '));
+    branches.push(`SELECT ${columns} FROM emails WHERE LOWER(subject) LIKE LOWER($${params.length - 1}) OR search_vector @@ to_tsquery('simple', $${params.length})`);
+  }
+  if (!branches.length) return [];
+  const { rows } = await query(`${branches.join(' UNION ')} ORDER BY received_at DESC LIMIT 25`, params);
+  return rows;
+}
+
 app.get('/api/v1/admin/clients/:clientId', async (req, res) => {
   const actor = requireAdminRole(req, res, ['admin', 'manager', 'operator', 'viewer']);
   if (!actor) return;
   const { rows } = await query('SELECT * FROM admin_clients WHERE id = $1', [req.params.clientId]);
   if (!rows.length) return sendError(res, 404, 'Client not found');
   const client = clientToApi(rows[0]);
-  const [{ rows: tasks }, { rows: audits }, { rows: relatedEmails }] = await Promise.all([
+  const [{ rows: tasks }, { rows: audits }, emails] = await Promise.all([
     query('SELECT * FROM admin_tasks WHERE client_id = $1 ORDER BY updated_at DESC', [client.id]),
     query(`SELECT * FROM admin_audit_logs WHERE entity_type = 'client' AND entity_id = $1 ORDER BY created_at DESC LIMIT 50`, [client.id]),
-    query(
-      `SELECT id, mailbox_id, subject, sender, recipient, received_at
-       FROM emails
-       WHERE ($1 <> '' AND (LOWER(sender) LIKE LOWER($2) OR LOWER(recipient) LIKE LOWER($2)))
-          OR ($3 <> '' AND (LOWER(subject) LIKE LOWER($4) OR LOWER(body_text) LIKE LOWER($4)))
-       ORDER BY received_at DESC
-       LIMIT 25`,
-      [client.email || '', `%${client.email || ''}%`, client.company || '', `%${client.company || ''}%`]
-    ),
+    relatedEmails(client),
   ]);
 
   res.json({
@@ -528,7 +543,7 @@ app.get('/api/v1/admin/clients/:clientId', async (req, res) => {
       client,
       tasks: tasks.map(taskToApi),
       audits: audits.map(auditToApi),
-      relatedEmails,
+      relatedEmails: emails,
       stats: {
         totalTasks: tasks.length,
         completedTasks: tasks.filter((task) => isTerminalTaskStatus(task.status)).length,

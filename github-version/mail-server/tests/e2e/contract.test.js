@@ -428,3 +428,30 @@ test('a server fault is logged and not explained to the caller; a caller mistake
   const mistake = await call(`${base}/drafts`, { method: 'POST', body: { to: 'someone@example.test', subject: 'x', body: 'x', draft_id: 'not-a-uuid' } });
   assert.deepEqual([mistake.status, mistake.body.error], [400, { code: 'VALIDATION_ERROR', message: 'draft_id must be a UUID' }]);
 });
+
+test('a client page lists the emails written by the client and the ones that only name the company in the body', { skip }, async () => {
+  const base = await seededMailbox();
+  const mailboxId = base.split('/').pop();
+  const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 1 });
+  try {
+    const insert = (sender, subject, body) => pool.query(
+      `INSERT INTO emails (mailbox_id, folder_id, thread_id, subject, sender, recipient, body_text, body_html, email_date)
+       SELECT $1, f.id, gen_random_uuid(), $3, $2, 'me@example.test', $4, $4, now() FROM folders f WHERE f.mailbox_id = $1 AND f.slug = 'inbox'`,
+      [mailboxId, sender, subject, body]);
+    await insert('someone@elsewhere.org', '문의 드립니다', '내용입니다');
+    await insert('stranger@nowhere.org', '안부 인사', 'Example 회사와 함께 진행하고 싶습니다');
+    await insert('bystander@nowhere.org', '안부 인사', '다른 회사 이야기입니다');
+  } finally {
+    await pool.end();
+  }
+  const client = (await call('/api/v1/admin/clients', {
+    method: 'POST', body: { name: 'Someone', company: 'Example', email: 'someone@elsewhere.org' },
+  })).body.data;
+  const detail = await call(`/api/v1/admin/clients/${client.id}`);
+  assert.equal(detail.status, 200);
+  const senders = detail.body.data.relatedEmails.map((row) => row.sender);
+  assert.ok(senders.includes('someone@elsewhere.org'), 'matched by address');
+  assert.ok(senders.includes('stranger@nowhere.org'), 'matched by a company name in the body');
+  assert.ok(!senders.includes('bystander@nowhere.org'), 'unrelated mail is not listed');
+  assert.deepEqual([detail.body.data.stats.totalTasks, detail.body.data.client.company], [0, 'Example']);
+});
