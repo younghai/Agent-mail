@@ -15,6 +15,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useMailboxParams } from "~/hooks/useMailboxParams";
+import { capabilities } from "~/lib/capabilities";
 import api from "~/services/api";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 
@@ -275,7 +276,7 @@ export default function SettingsRoute() {
 								<option value="kimi">Kimi (Moonshot AI)</option>
 								<option value="codex">Codex OAuth</option>
 								<option value="openai">OpenAI-compatible</option>
-								<option value="workers-ai">Cloudflare Workers AI</option>
+								{capabilities.workersAi && <option value="workers-ai">Cloudflare Workers AI</option>}
 							</select>
 						</div>
 

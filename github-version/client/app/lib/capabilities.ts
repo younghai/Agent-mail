@@ -8,6 +8,8 @@ export const capabilities = {
 	sendMail: !isReplitProduction,
 	/** Draft replies and chat with the AI service. */
 	aiAssistant: !isReplitProduction,
+	/** Workers AI is reached only from the Cloudflare deployment, never from Replit. */
+	workersAi: !isReplitProduction,
 	/** Administrator password login with a server session. */
 	sessionLogin: isReplitProduction,
 };
