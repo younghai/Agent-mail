@@ -54,8 +54,7 @@ const FOLDER_EMPTY_STATES: Record<
 	[Folders.INBOX]: {
 		icon: <TrayIcon size={48} weight="thin" className="text-kumo-subtle" />,
 		title: "받은 메일함이 비어 있습니다",
-		description:
-			"샘플 캠페인 9건을 불러와 요약, 회신 초안, 요구사항, 캠페인 초안 검토를 시작할 수 있습니다.",
+		description: `샘플 캠페인 ${DEMO_CAMPAIGNS.length}건을 불러와 요약, 회신 초안, 요구사항, 캠페인 초안 검토를 시작할 수 있습니다.`,
 		showCompose: true,
 	},
 	[Folders.SENT]: {
@@ -63,7 +62,10 @@ const FOLDER_EMPTY_STATES: Record<
 			<PaperPlaneTiltIcon size={48} weight="thin" className="text-kumo-subtle" />
 		),
 		title: "No sent emails",
-		description: "Emails you send will show up here.",
+		// Where delivery is off, promising that sent mail will appear would be false.
+		description: capabilities.sendMail
+			? "Emails you send will show up here."
+			: "Mail is not sent from this environment. Anything ever delivered would be listed here.",
 		showCompose: true,
 	},
 	[Folders.DRAFT]: {
@@ -77,6 +79,12 @@ const FOLDER_EMPTY_STATES: Record<
 		title: "Archive is empty",
 		description:
 			"Move emails here to keep your inbox clean without deleting them.",
+	},
+	[Folders.SPAM]: {
+		icon: <TrayIcon size={48} weight="thin" className="text-kumo-subtle" />,
+		title: "No spam",
+		description:
+			"Mail marked as spam is kept here. Nothing here means the inbox has no unwanted mail.",
 	},
 	[Folders.TRASH]: {
 		icon: <TrashIcon size={48} weight="thin" className="text-kumo-subtle" />,
