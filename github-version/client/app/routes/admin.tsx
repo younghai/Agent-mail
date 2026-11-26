@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Button, Input, Select, Textarea, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Button, Input, Select, Textarea, useKumoToastManager } from "@cloudflare/kumo";
 import { ArrowLeftIcon, CaretDownIcon, ChartLineUpIcon, PlusIcon } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
@@ -12,7 +12,7 @@ import { ADMIN_TOKENS } from "~/admin/designTokens";
 import { DEMO_ACTION_QUEUE, DEMO_DAILY_TIMELINE, DEMO_WEEKLY_TIMELINE, EMPTY_OVERVIEW, makeDemoOverview } from "~/admin/demoData";
 import { getOperationSection, STATUS_LABELS } from "~/admin/domain";
 import { DAILY_STATUS_SCORE, buildDailyTimeline, buildWeeklyTimeline, type DailyTimelineItem, type WeeklyTimelineItem } from "~/admin/timeline";
-import api from "~/services/api";
+import api, { ApiError } from "~/services/api";
 import type { AdminActionQueue, AdminClient, AdminOverview, AdminTask, AdminTaskStatus } from "~/types";
 import TaskTimelineBoard from "~/components/TaskTimelineBoard";
 
@@ -413,6 +413,25 @@ function AIAgentsOverview({ data }: { data: AdminOverview }) {
 	);
 }
 
+// A failed save keeps what was typed and says why it failed.
+function useSave<T>(save: (value: T) => Promise<void>, onSaved: () => void) {
+	const [isSubmitting, setIsSubmitting] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const run = async (value: T) => {
+		setError(null);
+		setIsSubmitting(true);
+		try {
+			await save(value);
+			onSaved();
+		} catch (err) {
+			setError(err instanceof ApiError ? err.message : "Could not save. Try again.");
+		} finally {
+			setIsSubmitting(false);
+		}
+	};
+	return { run, isSubmitting, error };
+}
+
 function ClientForm({
 	disabled = false,
 	onSubmit,
@@ -425,34 +444,35 @@ function ClientForm({
 	const [email, setEmail] = useState("");
 	const [owner, setOwner] = useState("");
 	const [notes, setNotes] = useState("");
-	const [isSubmitting, setIsSubmitting] = useState(false);
+	const { run: save, isSubmitting, error } = useSave(onSubmit, () => {
+		setName("");
+		setCompany("");
+		setEmail("");
+		setOwner("");
+		setNotes("");
+	});
 
-	const submit = async (event: FormEvent) => {
+	const submit = (event: FormEvent) => {
 		event.preventDefault();
 		if (disabled || !name.trim() || !company.trim()) return;
-		setIsSubmitting(true);
-		try {
-			await onSubmit({
-				name: name.trim(),
-				company: company.trim(),
-				email: email.trim(),
-				owner: owner.trim(),
-				status: "active",
-				tags: [],
-				notes: notes.trim(),
-			});
-			setName("");
-			setCompany("");
-			setEmail("");
-			setOwner("");
-			setNotes("");
-		} finally {
-			setIsSubmitting(false);
-		}
+		void save({
+			name: name.trim(),
+			company: company.trim(),
+			email: email.trim(),
+			owner: owner.trim(),
+			status: "active",
+			tags: [],
+			notes: notes.trim(),
+		});
 	};
 
 	return (
 		<form onSubmit={submit} className="grid gap-3 md:grid-cols-2">
+			{error && (
+				<div className="md:col-span-2">
+					<Banner variant="error" text={error} />
+				</div>
+			)}
 			<Input label="Client name" value={name} onChange={(event) => setName(event.target.value)} required />
 			<Input label="Company" value={company} onChange={(event) => setCompany(event.target.value)} required />
 			<Input label="Email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
@@ -484,35 +504,36 @@ function TaskForm({
 	const [status, setStatus] = useState<AdminTaskStatus>("new");
 	const [completion, setCompletion] = useState("0");
 	const [issue, setIssue] = useState("");
-	const [isSubmitting, setIsSubmitting] = useState(false);
+	const { run: save, isSubmitting, error } = useSave(onSubmit, () => {
+		setTitle("");
+		setOwner("");
+		setStatus("new");
+		setCompletion("0");
+		setIssue("");
+	});
 
-	const submit = async (event: FormEvent) => {
+	const submit = (event: FormEvent) => {
 		event.preventDefault();
 		if (disabled || !clientId || !title.trim()) return;
-		setIsSubmitting(true);
-		try {
-			await onSubmit({
-				clientId,
-				title: title.trim(),
-				type: "task",
-				status,
-				priority: "normal",
-				owner: owner.trim(),
-				completion: Math.min(Math.max(Number(completion) || 0, 0), 100),
-				issue: issue.trim(),
-			});
-			setTitle("");
-			setOwner("");
-			setStatus("new");
-			setCompletion("0");
-			setIssue("");
-		} finally {
-			setIsSubmitting(false);
-		}
+		void save({
+			clientId,
+			title: title.trim(),
+			type: "task",
+			status,
+			priority: "normal",
+			owner: owner.trim(),
+			completion: Math.min(Math.max(Number(completion) || 0, 0), 100),
+			issue: issue.trim(),
+		});
 	};
 
 	return (
 		<form onSubmit={submit} className="grid gap-3 md:grid-cols-2">
+			{error && (
+				<div className="md:col-span-2">
+					<Banner variant="error" text={error} />
+				</div>
+			)}
 			<Select label="Client" value={clientId} onValueChange={(value) => setClientId(value ?? "")} required>
 				<Select.Option value="">Select client</Select.Option>
 				{clients.map((client) => (
