@@ -8,7 +8,7 @@ Use **this entire folder as the top level of the GitHub repository**. Uploading 
 
 ## 1. Package Status and Scope
 
-- Prepared: **2026-11-03**
+- First packaged: **2026-11-03**. Revised **2026-11-26** — the fixes are in [2.1](#21-fixes-in-the-2026-11-26-revision), which also lists what to check before pulling the revision into Replit.
 - Includes the production build/run path for Replit and administrator login.
 - The previous Cloudflare Workers sources and their documentation are preserved.
 - Real email sending, real campaign execution, and real AI calls in production are **not enabled**.
@@ -43,6 +43,40 @@ Differences between the previous Cloudflare/Docker-centric setup and this Replit
 
 Dependency lock files and previous security fixes are included as-is. This does not mean the package passed a new, full security audit.
 
+### 2.1 Fixes in the 2026-11-26 revision
+
+A quality audit of the first package found that the campaign review flow worked while most of the ordinary inbox did not in this build. Every finding was reproduced against the shipped server before it was changed. What an operator notices:
+
+| Area | Until 2026-11-03 | Since 2026-11-26 |
+|---|---|---|
+| Empty inbox | Nothing created the sample campaigns; the README gave a script for the browser console | The empty inbox offers **샘플 캠페인 9건 불러오기** and loads them itself |
+| Search | Every search failed and was shown as "No results found" | Search works, including the operators the search box advertises; a failed search says so and offers a retry |
+| Mark read, star | Undone immediately | Stays; the unread badge and the star icon follow |
+| Email panel | Never showed a star or a date | Shows both |
+| Drafts | Saving twice created two drafts; a reopened draft had no body; a reply draft inside a thread looked like a sent message | One draft per message, the body comes back, drafts in a thread have Edit and Discard |
+| Compose outside the inbox | The Compose button and Inbox Zero's Reply did nothing on Settings, the admin pages and Inbox Zero | The composer opens as a dialog there |
+| Send and AI | Offered as primary actions, then refused by the server | Not offered in this build; **Save as Draft** is the primary action, Reply and Forward still open a composer |
+| Cost Dashboard | The Dashboard's link led to a 404 | Opens |
+| Admin forms | A refused save left the form silent | The reason is shown and the typed values are kept |
+| Production gate | `POST …/emails/send` and the AI feedback and usage writes were not blocked | Blocked like the other sending and AI routes |
+| Errors | A wrong kind of id, or a failed save, answered 500 with the database's own message | A malformed id is 404; server faults say only that they failed and are logged; a caller mistake gives its reason |
+| Client page with many mails | Listing a client's related emails grew with every stored body (1.1 s at 20,000 mails of 22 KB) | A few milliseconds |
+
+Underneath: email rows have one shape from every endpoint; the list no longer ships message bodies (nine sample campaigns: 127 KB to 11 KB); admin writes are transactional; typecheck, the client's unit tests and a contract suite against a real PostgreSQL are part of CI.
+
+**Before pulling this revision into Replit:**
+
+1. **Check that the Replit workspace has not moved on.** This revision continues from the package pushed on 2026-11-14. If the workspace was edited on Replit since, pulling will conflict or overwrite that work; reconcile on a branch first.
+2. **Migration 007 adds a unique index** (one request task per email). Nothing runs it in production: as before, the schema reaches production through Replit Publish. If the migrations fail with `could not create unique index "idx_admin_tasks_mailbox_email_once"`, two tasks already share one email. The migration deletes nothing on purpose; the query that finds them is in the migration file.
+3. **Sending is not offered any more in this build.** If that is not what you want from this deployment, say so before pulling.
+
+### 2.2 Left as it was, deliberately
+
+- The Cloudflare Workers deployment target (`client/workers/`, `wrangler.jsonc` and the Cloudflare build config) is preserved. `wrangler.jsonc` names a production domain. Retiring it is an owner's decision.
+- The sidebar has 18 links in three groups. The first-run audit measures this against a budget of 8; the main group alone has 7. Not redesigned here.
+- `smtp_config` and `ai_conversations` have no readers. Dropping a table is a data deletion and was not done.
+- A company name in the middle of a longer word in an email body is no longer a match on a client's page; a name that is its own word, or begins one, is.
+
 ## 3. Repository Layout
 
 ```text
@@ -55,12 +89,14 @@ agent-mail-replit/
 ├── .gitignore / .replitignore
 ├── .env.example                      # Replit config reference; no real values
 ├── .github/workflows/
-│   └── replit-production.yml          # Tests and production build only
+│   └── replit-production.yml          # Typecheck, tests against PostgreSQL, production build; deploys nothing
 ├── pyproject.toml / uv.lock          # Dev Python dependencies
 ├── src/                              # Auxiliary Python package source
 └── github-version/
     ├── client/                       # Inbox UI, shared campaign data, Cloudflare sources
     ├── mail-server/                  # Express API, auth, SQL, tests
+    │   ├── migrations/               # 001–007; 007 = one request task per email
+    │   └── tests/e2e/                # Boots the shipped server against TEST_DATABASE_URL
     ├── ai-agent/                     # Previous Python AI sources; not started in production
     ├── scripts/
     │   ├── post-merge.sh             # Dependency install
@@ -266,9 +302,11 @@ Or start the `Agent Mail` workflow from Run.
 
 ### 7.1 Seeding sample campaign emails
 
-Current DB mails are not in the ZIP. In a new environment, seed samples after the DB is ready. If an existing DB is connected, seed only into the intended mailbox.
+Current DB mails are not in the ZIP. In a new environment, the samples are loaded from the Inbox itself.
 
-Open the dev preview or log into the production site, then run this in the same page's browser devtools console. The ID below is the sample mailbox ID from the initial migration; replace it with the real ID when using another mailbox.
+**From the Inbox.** Open a mailbox whose Inbox is empty. The empty state explains what the samples are for and offers **샘플 캠페인 9건 불러오기**. Click it: the list and the folder counts refresh, and a message names the next step (open a mail). Loading again adds nothing. If an existing DB is connected, do this only in the mailbox you intend.
+
+**Calling the endpoint.** The button calls the same endpoint you can call yourself. Log into the site (or open the dev preview) and send this as a same-origin request with the logged-in session. The ID below is the sample mailbox ID from the initial migration; replace it with the real ID when using another mailbox.
 
 ```js
 const mailboxId = "00000000-0000-0000-0000-000000000001";
@@ -285,7 +323,9 @@ console.log(await response.json());
 location.reload();
 ```
 
-This does not bypass server auth or put passwords in the console. In production it requires a normal login session and a same-origin HTTPS request. Repeated runs do not duplicate existing samples. `refreshContent: true` rewrites existing sample bodies — use it only when you intend to refresh content.
+Neither way bypasses server auth or puts passwords in the browser. In production both need a normal login session and a same-origin HTTPS request. Repeated calls do not duplicate existing samples. `refreshContent: true` rewrites existing sample bodies — use it only when you intend to refresh content.
+
+The button is the only place in the product that creates the samples. The four campaign buttons appear on no other mail, so a mailbox without them has no campaign review to do.
 
 ### 7.2 Included scenarios
 
@@ -377,7 +417,11 @@ If the problem reproduces, do not repeat the same file edit and restart. Disting
 - After admin login, the Inbox and body images open.
 - Saving reply/requirement/campaign drafts persists across a refresh.
 - After logout, mail API access is blocked again.
-- Real email sending returning `403 SENDING_DISABLED` and unconfigured AI/intake paths returning `503 SERVICE_NOT_CONFIGURED` are the current intended behavior.
+- Real email sending returning `403 SENDING_DISABLED` and unconfigured AI/intake paths returning `503 SERVICE_NOT_CONFIGURED` are the current intended behavior. Since 2026-11-26 the UI does not offer them: there is no Send button, and the AI panel cannot be opened.
+- On a mailbox with no mail, the empty Inbox offers **샘플 캠페인 9건 불러오기**; after one click nine mails are listed.
+- In an open mail, starring stays starred after a full reload, and the Inbox's unread count drops by one.
+- A search from the header returns results.
+- Reply opens a composer with the quoted mail, and **Save as Draft** puts a draft in the Drafts folder.
 
 A `200` on `/` alone does not mean login setup or all features are ready. The info page renders even when the admin password is missing or too short, while the mail API stays locked.
 
@@ -410,10 +454,14 @@ A `200` on `/` alone does not mean login setup or all features are ready. The in
 | Password setup info screen | Production secret presence, password length, whether the new config was applied |
 | Login screen reappears after login | HTTPS, cookies, external host, DB/session state |
 | `relation does not exist` | Dev schema preparation and Publishing's production schema promotion |
-| Inbox is empty | A new DB has no original mails; check mailbox/sample seeding |
+| Inbox is empty | A new DB has no original mails; the empty Inbox offers to load the sample campaigns |
+| No Send button, no AI panel | Intended in this build: the server refuses sending and AI here |
+| Search says "Search failed" | The request was refused; the message on the page is the server's reason. "No results found" means the search ran and matched nothing |
+| `500` from an API | The response says only "Internal server error"; the cause is in the server log for that request |
 | AI/mail intake `503` | Intentionally not connected in the current production scope |
 | Attachments `503` | Permanent S3 config and existing object migration needed |
 | Local MinIO bucket warning | Dev storage health; does not mean production storage is ready |
+| Migrations stop at `could not create unique index "idx_admin_tasks_mailbox_email_once"` | Two request tasks share one email (migration 007); the query that finds them is in that migration file |
 
 Never log passwords, connection strings, or session tokens. After fixes, re-run/re-publish the environment and verify the actual login/save paths.
 
@@ -422,18 +470,23 @@ Never log passwords, connection strings, or session tokens. After fixes, re-run/
 ```bash
 # From the repository root
 pnpm --dir github-version install --frozen-lockfile
-pnpm --dir github-version test
+pnpm --dir github-version typecheck            # the client, with react-router typegen
+TEST_DATABASE_URL=<a throwaway PostgreSQL> pnpm --dir github-version test
 bash -n github-version/scripts/build-replit.sh
 bash -n github-version/scripts/start-production.sh
 bash github-version/scripts/build-replit.sh
 
-# Verify integrity of the first downloaded source
+# Verify the files against the manifest of this revision
 sha256sum -c RELEASE-MANIFEST.sha256
 ```
 
-GitHub Actions runs the Mail Server tests and the Replit production build. It performs no DB migrations or deployments, and it does not replace the legacy Cloudflare integration tests or Python tests.
+`pnpm test` runs three things: the mail server's unit tests, its contract suite, and the client's unit tests.
 
-`VALIDATION.md` records which checks were actually run for this package and which were not. After modifying sources, checksums differing from the first release is expected.
+**The contract suite** starts the shipped production server — the real entry point, the real migrations — against `TEST_DATABASE_URL` and sends it the requests the client sends. It is what caught the defects of 2026-11-03, none of which a unit test could see. It needs the production SPA build to exist first (`build-replit.sh`), because the production launcher refuses to start without one. The database must be a throwaway one whose name contains `test`: the suite writes to it, and refuses any other. Without `TEST_DATABASE_URL` the suite is skipped and nothing connects anywhere.
+
+GitHub Actions runs the same: typecheck, then the build, then the tests against a PostgreSQL service. It performs no DB migrations on your database and no deployment. It does not run the legacy Cloudflare integration tests or the Python tests.
+
+`VALIDATION.md` records which checks were actually run for this revision and which were not. `RELEASE-MANIFEST.sha256` lists the files of this revision; after you modify a source, its checksum differing is expected.
 
 ## 11. Source, License, and References
 

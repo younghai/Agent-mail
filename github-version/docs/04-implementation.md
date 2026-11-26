@@ -11,7 +11,7 @@
 | AI Agent API | ✅ 완료 | `ai-agent/main.py` (395줄) | FastAPI, SSE, Redis 소비자 |
 | DB 스키마 | ✅ 완료 | `mail-server/migrations/001_initial.sql` | 14개 테이블, 인덱스, 트리거 |
 | Docker 이미지 | ✅ 완료 | `mail-server/Dockerfile`, `ai-agent/Dockerfile` | Alpine 기반, 비루트 사용자 |
-| Seed 데이터 | ✅ 완료 | `mail-server/src/seed.js` | 7개 샘플 이메일 |
+| Seed 데이터 | ✅ 완료 | `mail-server/src/seed.js` | 39개 샘플 이메일 (2026-11-26에 시드 스크립트 3개를 하나로 합침) |
 | 단위 테스트 | 🔶 부분 | `ai-agent/tests/test_utils.py` | 일부 유틸리티만 테스트 |
 | 통합 테스트 | ❌ 없음 | — | E2E 테스트 미작성 |
 
