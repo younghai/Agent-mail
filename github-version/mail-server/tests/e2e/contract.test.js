@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,7 @@ if (DATABASE_URL && !/test/i.test(new URL(DATABASE_URL).pathname)) {
 // Synthetic test credentials only. No workspace secret is read.
 const PASSWORD = 'contract-test-password-only-123456';
 const ENTRY = fileURLToPath(new URL('../../src/index.js', import.meta.url));
+const SEED = fileURLToPath(new URL('../../src/seed.js', import.meta.url));
 const MIGRATIONS = fileURLToPath(new URL('../../migrations', import.meta.url));
 
 let server;
@@ -292,5 +293,32 @@ test('search takes the parameters the client sends and honours the operators it 
   // A search the server cannot act on must fail, not list the mailbox as if it were a result.
   for (const params of [{}, { is_read: 'maybe' }, { date_start: 'not-a-date' }, { after: '2026-11-01' }]) {
     assert.deepEqual(await search(params), { status: 400, code: 'VALIDATION_ERROR' }, JSON.stringify(params));
+  }
+});
+
+test('the development seed is one script that counts what it inserts and fails loudly', { skip }, async () => {
+  const seededMailbox = '00000000-0000-0000-0000-000000000001';
+  const run = (url) => new Promise((resolve) => {
+    execFile(process.execPath, [SEED], { env: { PATH: process.env.PATH, DATABASE_URL: url } },
+      (error, stdout, stderr) => resolve({ code: error ? error.code : 0, output: `${stdout}${stderr}`.trim() }));
+  });
+  const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 1 });
+  try {
+    await pool.query('DELETE FROM emails WHERE mailbox_id = $1', [seededMailbox]);
+    const count = async () => (await pool.query(
+      'SELECT count(*)::int AS count FROM emails WHERE mailbox_id = $1', [seededMailbox])).rows[0].count;
+
+    assert.deepEqual(await run(DATABASE_URL), { code: 0, output: 'Seeded 39 of 39 sample emails' });
+    assert.equal(await count(), 39);
+    assert.deepEqual(await run(DATABASE_URL), { code: 0, output: 'Seeded 0 of 39 sample emails' }, 'running it twice adds nothing');
+
+    // A database without the tables is a failure a caller has to be able to see.
+    const nowhere = new URL(DATABASE_URL);
+    nowhere.pathname = '/postgres';
+    const failed = await run(nowhere.href);
+    assert.equal(failed.code, 1);
+    assert.match(failed.output, /Seed failed:/);
+  } finally {
+    await pool.end();
   }
 });
