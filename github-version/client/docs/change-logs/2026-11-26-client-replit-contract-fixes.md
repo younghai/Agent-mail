@@ -41,7 +41,7 @@ The campaign review flow (Summary, Draft reply, Requirement, Make campaign) was 
 ## Verification performed
 
 - `pnpm typecheck` (was failing on main), 233 client unit tests, including new tests for `ApiError`, `parseSearchQuery` and a guard that `capabilities.ts` is the only file reading `VITE_REPLIT_PRODUCTION`.
-- The mail server's contract suite runs the shipped production server against a real PostgreSQL and sends the requests this client sends (15 tests).
+- The mail server's contract suite runs the shipped production server against a real PostgreSQL and sends the requests this client sends (16 tests). One of them reads this client's sources for every `/api/v1` URL it calls and requires each to answer on the server, so adding an API function without a server route fails there.
 - The production build was driven in a browser against the real server on a throwaway database: login, loading samples from an empty inbox, marking read (Inbox badge 9 to 8), starring surviving a full reload, the detail panel's star and date, search with and without operators, a forced search failure and retry, Compose on Settings with a saved draft, Reply saving a draft with `in_reply_to`, the thread showing "2 messages, 1 draft" with Edit and Discard, the Cost Dashboard route, the admin client form's failed and successful save, and the provider list without Workers AI.
 - First-run audit on a mailbox that had never held mail: every folder view, the search page, the core journey from an empty inbox to a saved reply draft, and the active sidebar item.
 

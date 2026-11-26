@@ -59,7 +59,7 @@ A quality audit of the first package found that the campaign review flow worked 
 | Cost Dashboard | The Dashboard's link led to a 404 | Opens |
 | Admin forms | A refused save left the form silent | The reason is shown and the typed values are kept |
 | Production gate | `POST …/emails/send` and the AI feedback and usage writes were not blocked | Blocked like the other sending and AI routes |
-| Errors | A wrong kind of id, or a failed save, answered 500 with the database's own message | A malformed id is 404; server faults say only that they failed and are logged; a caller mistake gives its reason |
+| Errors | A wrong kind of id, or a failed save, answered 500 with the database's own message | A malformed id is 404 in a path and 400 in a body; server faults say only that they failed and are logged; a caller mistake gives its reason |
 | Client page with many mails | Listing a client's related emails grew with every stored body (1.1 s at 20,000 mails of 22 KB) | A few milliseconds |
 
 Underneath: email rows have one shape from every endpoint; the list no longer ships message bodies (nine sample campaigns: 127 KB to 11 KB); admin writes are transactional; typecheck, the client's unit tests and a contract suite against a real PostgreSQL are part of CI.
@@ -75,7 +75,7 @@ Underneath: email rows have one shape from every endpoint; the list no longer sh
 - The Cloudflare Workers deployment target (`client/workers/`, `wrangler.jsonc` and the Cloudflare build config) is preserved. `wrangler.jsonc` names a production domain. Retiring it is an owner's decision.
 - The sidebar has 18 links in three groups. The first-run audit measures this against a budget of 8; the main group alone has 7. Not redesigned here.
 - `smtp_config` and `ai_conversations` have no readers. Dropping a table is a data deletion and was not done.
-- A company name in the middle of a longer word in an email body is no longer a match on a client's page; a name that is its own word, or begins one, is.
+- On a client's page, a company name in an email body counts only where its words stand together, each as a whole word or the start of one. A name buried inside a longer word, or a two-word name whose words appear in different places, no longer counts. The address and the subject match as before.
 
 ## 3. Repository Layout
 

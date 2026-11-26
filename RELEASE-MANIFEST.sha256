@@ -3,9 +3,9 @@ dd5848dafeb0f6f833d0af63260b4a7863234960561e37546bf5b61948c9ca88  .env.example
 720ca8fe4d014d96c62f85238aeced74bbe45d76d6be0b35f4cd0be6ae6e8c75  .gitignore
 75c2743160c2af0b3b14c4a4c4f81d2394fed86f0951b5769c4bd5069c2eb132  .replit
 500af6436fbf3cba373d28b21d8d789a5041842f8f5ee93549cbab97218a42ff  .replitignore
-fe6738238a585f16fb64693d10888bdd3825e27c35f0ce43966ee5fefb4f2f6c  README.ko.md
-d843bf27a12838b8521341eb13bc73bda878819d169e8ff7deb0f2a49d5be25c  README.md
-a2367871c3f69d1bc6f09c94ebe0a4853d203aec01d0e38983c0493b40e72559  VALIDATION.md
+1d45ad5c4de3c6eed09e002b6e240c9f11d93d9b2da654c38c3faacb85906c47  README.ko.md
+3902ee74b51cab4fb99e20dcb8150b9f292561c63bac3083a07ea44b15cc7c2c  README.md
+49e599e261e88869229c61af4c97f641c49e4440ca05400435ac83efeb2e6313  VALIDATION.md
 6de4bd5f50e84d25df69396a22061e7d89e00376f60afaf5e7be611cbdaa20fd  github-version/.env.example
 21bc02cc0f774728bd0ae780ed011599c64aa4add0106dfedd9ca3769b2e76f1  github-version/.github/workflows/ci.yml
 a9d3d6d2e6732a896213a46f64abf87ff2efc6aef882fc825b294b39b80d7b0e  github-version/.gitignore
@@ -137,7 +137,7 @@ de8918173a3bb1c7705419303f06092911295356f082d1186dc65f77c095c6a2  github-version
 73ed04660713f49ab242b9b313c0c31a414556d2f44d1810a65e4db4fe10e972  github-version/client/docs/change-logs/2026-05-10-v0-local-menu-routing-repair.md
 5d41747e1759860cbcd5f67d3c2c9b5d542bff34ae8b4f8c66e99a42bf960b63  github-version/client/docs/change-logs/2026-06-01-localhost-5174-vite-stability.md
 a253d98fb3f92fcba29742d43baddb39ccd1ac47c96e8e132d4a62e56f487a60  github-version/client/docs/change-logs/2026-06-03-client-workspace-release-ui.md
-f729192e17884d76f7d79ae7fbc1b0fa46ecd8d9d70f05d331b7daf03cd623bb  github-version/client/docs/change-logs/2026-11-26-client-replit-contract-fixes.md
+969a00776afb8164d568344209c90e46d5b58ab9b945f9e41bf144cb2ed722f3  github-version/client/docs/change-logs/2026-11-26-client-replit-contract-fixes.md
 1fa35be9dd84d724ea6733c4eb2c9986ef8f95523e6ca240eaf65d15164cef3d  github-version/client/docs/checklists/M4-vitest-pool-workers.md
 68835d41664061782f3c73ff26fa26946fe938760ad43d14151c2267f951d6f0  github-version/client/docs/checklists/M5-admin-cost-dashboard.md
 26d38184eb72108a96672bc37b578184f0723e75e0e016b8a625952d97c325ef  github-version/client/docs/inbox-ai-spec.md
@@ -330,7 +330,7 @@ f2ee541cf07e7662c02127d1b0daee22286a03c4f3065246cfb03f091a030484  github-version
 9eeaca0774a3948cdc965e1dc35ffcedd27c63e39b35a224ce77e208106367ac  github-version/mail-server/package.json
 8a10b845998476e1705fd681642f887cc662f57d28c6a8ead9ce613554c16f0a  github-version/mail-server/src/config.js
 13bd1dd596071f79878b81fcd21d9d058b806479f82a424c4a99985e1c06bf53  github-version/mail-server/src/db.js
-41f1701d7472e19b7f16e5752fed32c63a898a8d2f45e52aa64cd326278c310f  github-version/mail-server/src/index.js
+8ed086ae29e8ebe29d3e0be4d165429d2d6448d61af66a2ce152a6017ec3afa2  github-version/mail-server/src/index.js
 9c64ce3a64178e734b9633e9e52dbf11218339a7cb39d51ae481357f78a48ee8  github-version/mail-server/src/lib/admin-auth.js
 fa13fe3f5b9a1c9bfbb24acddbd943a0e11f169507294bc203dc845506d4e24a  github-version/mail-server/src/lib/domain.js
 00b0bb16814331f7f8c1c47f8f9aacab46a758d78f6cc8c3ab860ffa2cd23e29  github-version/mail-server/src/lib/html.js
@@ -353,7 +353,7 @@ f0c1b7112aedbb5486af375813e461338f11f5f6880ba6c299874912e35773df  github-version
 30e5df7ad257b6df2945408bbfdd872aaec65406e0fdde6c7615eb34b9413a0c  github-version/mail-server/tests/admin-auth.test.js
 3df8329cb996502212e5f62b6778518ace0dd7504d3aa32f70e0e0d62841fcd6  github-version/mail-server/tests/campaign-demo.test.js
 e38b86edcfc50df9d413a546476c81e5e1e89fe1f36ef55a8fea83ed1dfa6c4b  github-version/mail-server/tests/dependency-compatibility.test.js
-9796348b12cb81aec3c4f2b2a9c06fd0980b23b6489efc25379edda35645de3c  github-version/mail-server/tests/e2e/contract.test.js
+ff19850da2814ef6aa31f253ebf85808942e6e116f0b3fc4f6b55e91f4c87c45  github-version/mail-server/tests/e2e/contract.test.js
 6da133360b5009d11280b7e02f79d7bf1fd0208b80073183bd9c2d90f09843f7  github-version/mail-server/tests/html.test.js
 8f6a784ce679aedc5c60bd27151df5adf83b735aa193b854ace21ebb67bcbab4  github-version/mail-server/tests/inbound-email.test.js
 e6f0253d9cb497cab0b662c2c2c433452f29eca0be8c3b149d33b9a066ada08c  github-version/mail-server/tests/production-web.test.js
