@@ -1,3 +1,5 @@
+import { NODE_ENV } from '../config.js';
+
 export function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
@@ -10,8 +12,17 @@ export function wrapAsyncRoutes(app) {
   });
 }
 
+// A 5xx message comes from an exception and may name tables, files or hosts.
+// In production the caller learns the fact of the failure; the log keeps the cause.
 export function sendError(res, status, message) {
-  res.status(status).json({ success: false, error: { code: 'ERROR', message } });
+  const serverFault = status >= 500;
+  res.status(status).json({
+    success: false,
+    error: {
+      code: serverFault ? 'INTERNAL_ERROR' : 'ERROR',
+      message: serverFault && NODE_ENV === 'production' ? 'Internal server error' : message,
+    },
+  });
 }
 
 export function validationError(message) {
@@ -82,10 +93,12 @@ export function readTags(body) {
   }).filter(Boolean);
 }
 
+export const isUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+
 export function readNullableUuid(body, field) {
   const value = readString(body, field, { defaultValue: '', max: 80 });
   if (!value) return null;
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+  if (!isUuid(value)) {
     validationError(`${field} must be a UUID`);
   }
   return value;

@@ -160,8 +160,13 @@ test('campaign review works end to end: seed, complete requirements, keep one re
   assert.equal(response.body.data.reply.body, '수정된 답변');
   assert.equal(response.body.data.campaign.title, 'OLED 런칭 검토');
 
-  assert.equal((await call(`${workspace}/reply`, { method: 'POST', body: { subject: '', body: '' } })).status, 400);
-  assert.equal((await call(`${base}/emails/${randomUUID()}/campaign-workspace`)).status, 404);
+  // Errors use the one envelope the rest of the API and the client's ApiError expect.
+  const rejected = await call(`${workspace}/reply`, { method: 'POST', body: { subject: '', body: '' } });
+  assert.deepEqual(rejected, { status: 400, body: { success: false, error: {
+    code: 'VALIDATION_ERROR', message: '제목과 본문을 입력해 주세요. 제목은 500자, 본문은 30,000자 이내입니다.',
+  } } });
+  const unknown = await call(`${base}/emails/${randomUUID()}/campaign-workspace`);
+  assert.deepEqual([unknown.status, unknown.body], [404, { success: false, error: { code: 'NOT_FOUND', message: '메일을 찾을 수 없습니다.' } }]);
 });
 
 async function seededMailbox() {
@@ -366,4 +371,60 @@ test('admin writes are all-or-nothing, and one email becomes one task even when 
   const before = (await tasksFor()).length;
   assert.equal((await call('/api/v1/admin/clients', { method: 'POST', body: { name: 'Third', company: 'Third Co' } })).status, 201);
   assert.equal((await tasksFor()).length, before);
+});
+
+test('an id that is not a UUID names nothing: 404, not a server fault', { skip }, async () => {
+  const base = `/api/v1/mailboxes/${await createMailbox()}`;
+  const probes = [
+    ['GET', `${base}/emails/not-a-uuid`],
+    ['GET', `${base}/threads/not-a-uuid`],
+    ['GET', `${base}/emails/${randomUUID()}/attachments/not-a-uuid`],
+    ['PUT', `${base}/emails/not-a-uuid`],
+    ['DELETE', `${base}/folders/not-a-uuid`],
+    ['GET', '/api/v1/admin/clients/not-a-uuid'],
+    ['PUT', '/api/v1/admin/tasks/not-a-uuid'],
+    ['GET', '/api/v1/admin/tasks/not-a-uuid'],
+  ];
+  for (const [method, path] of probes) {
+    const response = await call(path, { method, body: method === 'GET' ? undefined : {} });
+    assert.deepEqual([path, response.status, response.body?.error?.code], [path, 404, 'ERROR'], `${method} ${path}`);
+  }
+});
+
+test('every route the React app relies on is registered on the shipped server', { skip }, async () => {
+  const base = `/api/v1/mailboxes/${await createMailbox()}`;
+  const reads = [
+    `${base}/approvals`, `${base}/segments`, `${base}/admin/sla`, `${base}/folders`,
+    '/api/v1/admin/cost/daily', '/api/v1/admin/cost/monthly', '/api/v1/admin/cost/models',
+    '/api/v1/admin/overview', '/api/v1/admin/action-queue', '/api/v1/admin/clients', '/api/v1/admin/tasks',
+    '/api/v1/config', '/api/v1/status', '/health', '/ready',
+  ];
+  for (const path of reads) {
+    const response = await call(path);
+    assert.deepEqual([path, response.status], [path, 200], 'a 404 here means the client calls a route that does not exist');
+  }
+  // AI routes answer 503 to reads as well as writes where the AI service is off.
+  const gated = await call(`${base}/agent-feedback/summary`);
+  assert.deepEqual([gated.status, gated.body?.error?.code], [503, 'SERVICE_NOT_CONFIGURED']);
+  // Writes are registered too: an unknown draft is the route's own 404, not the framework's.
+  const approval = await call(`${base}/drafts/${randomUUID()}/approval`, { method: 'POST', body: { action: 'approve' } });
+  assert.deepEqual([approval.status, approval.body?.error?.message], [404, 'Draft not found']);
+});
+
+test('a server fault is logged and not explained to the caller; a caller mistake still is', { skip }, async () => {
+  const base = `/api/v1/mailboxes/${await createMailbox()}`;
+  const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 1 });
+  const save = (subject) => call(`${base}/drafts`, { method: 'POST', body: { to: 'someone@example.test', subject, body: '<p>x</p>' } });
+  try {
+    await pool.query(`ALTER TABLE emails ADD CONSTRAINT contract_probe_reject CHECK (subject <> 'probe-fault')`);
+    const fault = await save('probe-fault');
+    assert.deepEqual(fault, { status: 500, body: { success: false, error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } } },
+      'a database constraint is the server\'s business, not the caller\'s');
+  } finally {
+    await pool.query('ALTER TABLE emails DROP CONSTRAINT IF EXISTS contract_probe_reject');
+    await pool.end();
+  }
+  assert.equal((await save('probe-fine')).status, 200);
+  const mistake = await call(`${base}/drafts`, { method: 'POST', body: { to: 'someone@example.test', subject: 'x', body: 'x', draft_id: 'not-a-uuid' } });
+  assert.deepEqual([mistake.status, mistake.body.error], [400, { code: 'VALIDATION_ERROR', message: 'draft_id must be a UUID' }]);
 });

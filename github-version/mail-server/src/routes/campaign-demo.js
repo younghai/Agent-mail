@@ -4,7 +4,9 @@ import {
 } from '../../../client/shared/campaign-demo.js';
 
 const base = '/api/v1/mailboxes/:mailboxId/emails/:emailId/campaign-workspace';
-const fail = (res, status, message) => res.status(status).json({ error: message });
+const CODE_BY_STATUS = { 400: 'VALIDATION_ERROR', 404: 'NOT_FOUND', 422: 'DEMO_ONLY' };
+// The envelope every other route and the global handler answer with.
+const fail = (res, status, message) => res.status(status).json({ success: false, error: { code: CODE_BY_STATUS[status], message } });
 const html = (body) => `<div style="white-space:pre-wrap">${escapeHtml(body)}</div>`;
 
 export function registerCampaignDemoRoutes(app, { query, pool }) {

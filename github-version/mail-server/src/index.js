@@ -29,6 +29,7 @@ import { registerCampaignDemoRoutes } from './routes/campaign-demo.js';
 import {
   assertPlainObject,
   getBoundedPagination,
+  isUuid,
   readEmail,
   readEnum,
   readInt,
@@ -108,6 +109,11 @@ app.param('mailboxId', async (req, res, next, mailboxId) => {
     next(e);
   }
 });
+// Every other id names a row by UUID. One that is not a UUID names nothing,
+// so it is a 404 here instead of a database error further along.
+for (const name of ['id', 'emailId', 'threadId', 'attachmentId', 'clientId', 'taskId']) {
+  app.param(name, (req, res, next, value) => (isUuid(value) ? next() : sendError(res, 404, 'Not found')));
+}
 
 function taskToApi(row) {
   return {
@@ -771,7 +777,7 @@ app.post('/api/v1/mailboxes', async (req, res) => {
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK');
-    return sendError(res, 500, e.message);
+    throw e;
   } finally {
     client.release();
   }
@@ -985,7 +991,7 @@ app.post('/api/v1/mailboxes/:mailboxId/drafts', async (req, res) => {
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK');
-    return sendError(res, 400, e.message);
+    throw e;
   } finally {
     client.release();
   }
@@ -1122,29 +1128,25 @@ app.post('/api/v1/mailboxes/:mailboxId/emails/send', async (req, res) => {
   const { rows: mbRows } = await query('SELECT email FROM mailboxes WHERE id = $1', [mailboxId]);
   const fromAddress = mbRows[0]?.email;
 
-  try {
-    const info = await sendEmail({ from: fromAddress, to, subject, text, html, inReplyTo: in_reply_to });
+  const info = await sendEmail({ from: fromAddress, to, subject, text, html, inReplyTo: in_reply_to });
 
-    // Sent 폴더에 저장
-    const { rows: folderRows } = await query(
-      'SELECT id FROM folders WHERE mailbox_id = $1 AND slug = $2',
-      [mailboxId, 'sent']
+  // Sent 폴더에 저장
+  const { rows: folderRows } = await query(
+    'SELECT id FROM folders WHERE mailbox_id = $1 AND slug = $2',
+    [mailboxId, 'sent']
+  );
+  const folderId = folderRows[0]?.id;
+  if (folderId) {
+    const id = uuidv4();
+    const resolvedThread = thread_id || in_reply_to || id;
+    await query(
+      `INSERT INTO emails (id, mailbox_id, folder_id, thread_id, subject, sender, recipient, body_text, body_html, message_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [id, mailboxId, folderId, resolvedThread, subject, fromAddress, to, text || '', html || '', info.messageId || null]
     );
-    const folderId = folderRows[0]?.id;
-    if (folderId) {
-      const id = uuidv4();
-      const resolvedThread = thread_id || in_reply_to || id;
-      await query(
-        `INSERT INTO emails (id, mailbox_id, folder_id, thread_id, subject, sender, recipient, body_text, body_html, message_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [id, mailboxId, folderId, resolvedThread, subject, fromAddress, to, text || '', html || '', info.messageId || null]
-      );
-    }
-
-    res.status(201).json({ success: true, data: { messageId: info.messageId } });
-  } catch (err) {
-    sendError(res, 500, err.message);
   }
+
+  res.status(201).json({ success: true, data: { messageId: info.messageId } });
 });
 
 // ---------- AI Auto-draft trigger ----------
