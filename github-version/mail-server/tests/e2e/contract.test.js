@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -59,6 +60,9 @@ before(async () => {
   if (!DATABASE_URL) return;
   const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 1 });
   await runMigrations(pool, MIGRATIONS);
+  // A run killed between adding and dropping a probe constraint must not decide the next run.
+  await pool.query('ALTER TABLE emails DROP CONSTRAINT IF EXISTS contract_probe_reject');
+  await pool.query('ALTER TABLE admin_audit_logs DROP CONSTRAINT IF EXISTS contract_probe_reject');
   await pool.end();
 
   const port = await new Promise((resolve, reject) => {
@@ -393,24 +397,130 @@ test('an id that is not a UUID names nothing: 404, not a server fault', { skip }
   assert.deepEqual([unknownThread.status, unknownThread.body?.data], [200, []]);
 });
 
-test('every route the React app relies on is registered on the shipped server', { skip }, async () => {
-  const base = `/api/v1/mailboxes/${await createMailbox()}`;
-  const reads = [
-    `${base}/approvals`, `${base}/segments`, `${base}/admin/sla`, `${base}/folders`,
-    '/api/v1/admin/cost/daily', '/api/v1/admin/cost/monthly', '/api/v1/admin/cost/models',
-    '/api/v1/admin/overview', '/api/v1/admin/action-queue', '/api/v1/admin/clients', '/api/v1/admin/tasks',
-    '/api/v1/config', '/api/v1/status', '/health', '/ready',
-  ];
-  for (const path of reads) {
-    const response = await call(path);
-    assert.deepEqual([path, response.status], [path, 200], 'a 404 here means the client calls a route that does not exist');
+// What the client calls, read from the client's own sources: every /api/v1 URL
+// literal, with the method of the call around it. Add an API function to the
+// client and this list grows with it.
+const METHOD_OF = { get: 'GET', post: 'POST', put: 'PUT', del: 'DELETE' };
+function clientRoutes() {
+  const read = (file) => readFileSync(new URL(`../../../client/app/${file}`, import.meta.url), 'utf8');
+  const shape = (url) => url.replace(/\$\{[^}]*\}/g, ':x');
+  const literals = (text) => [...text.matchAll(/([`"'])(\/api\/v1\/[^`"']*)\1/g)];
+  const routes = new Set();
+  const api = read('services/api.ts');
+  for (const match of literals(api)) {
+    const before = api.slice(0, match.index);
+    const helper = ['get', 'post', 'put', 'del']
+      .map((name) => [name, before.lastIndexOf(`${name}<`)]).sort((a, b) => b[1] - a[1])[0][0];
+    routes.add(`${METHOD_OF[helper]} ${shape(match[2])}`);
   }
-  // AI routes answer 503 to reads as well as writes where the AI service is off.
-  const gated = await call(`${base}/agent-feedback/summary`);
-  assert.deepEqual([gated.status, gated.body?.error?.code], [503, 'SERVICE_NOT_CONFIGURED']);
-  // Writes are registered too: an unknown draft is the route's own 404, not the framework's.
-  const approval = await call(`${base}/drafts/${randomUUID()}/approval`, { method: 'POST', body: { action: 'approve' } });
-  assert.deepEqual([approval.status, approval.body?.error?.message], [404, 'Draft not found']);
+  for (const file of ['routes/home.tsx', 'components/AgentPanel.tsx', 'lib/utils.ts']) {
+    const text = read(file);
+    for (const match of literals(text)) {
+      const sent = text.slice(match.index, match.index + 200).match(/method:\s*["'](POST|PUT|DELETE)["']/);
+      routes.add(`${sent ? sent[1] : 'GET'} ${shape(match[2])}`);
+    }
+  }
+  // The campaign service builds its URLs through a helper, so its routes are named here.
+  const campaign = read('services/campaign-demo.ts');
+  assert.match(campaign, /demo-campaigns\/seed`/);
+  assert.match(campaign, /campaign-workspace`/);
+  routes.add('POST /api/v1/mailboxes/:x/demo-campaigns/seed');
+  for (const method of ['GET', 'PUT']) routes.add(`${method} /api/v1/mailboxes/:x/emails/:x/campaign-workspace`);
+  for (const operation of ['reply', 'campaign']) routes.add(`POST /api/v1/mailboxes/:x/emails/:x/campaign-workspace/${operation}`);
+  return routes;
+}
+
+// Routes the shipped server has but the client never calls.
+const SERVER_ONLY = [
+  'POST /api/v1/mailboxes/:x/emails/send', 'POST /api/v1/mailboxes/:x/test-autodraft', 'POST /api/v1/admin/agent-usage',
+];
+
+test('every route the client calls answers on the shipped server, and the list of them is read from the client', { skip }, async () => {
+  const base = await seededMailbox();
+  const mailboxId = base.split('/').pop();
+  const [email, second, third] = await inbox(base);
+  const post = (path, body) => call(path, { method: 'POST', body });
+  const scratch = (await post('/api/v1/mailboxes', { email: `routes-${randomBytes(4).toString('hex')}@example.test`, name: 'Routes' })).body.data.id;
+  const client = (await post('/api/v1/admin/clients', { name: 'Routes', company: 'Routes Co' })).body.data;
+  const taskBody = { clientId: client.id, title: 'Routes', type: 'task', status: 'new', priority: 'normal', owner: '', dueDate: '', completion: 0, issue: '', notes: '' };
+  const task = (await post('/api/v1/admin/tasks', taskBody)).body.data;
+  const folder = (await post(`${base}/folders`, { name: 'Routes' })).body.data.id;
+  const emailPath = `${base}/emails/${email.id}`;
+  const anyId = randomUUID();
+  const message = { to: 'someone@example.test', subject: 'Routes', html: '<p>x</p>', text: 'x' };
+
+  // Route as the client writes it, a concrete path, a body, and the status the route itself answers with.
+  const table = [
+    ['GET /api/v1/config', '/api/v1/config', undefined, 200],
+    ['GET /api/v1/status', '/api/v1/status', undefined, 200],
+    ['GET /api/v1/mailboxes', '/api/v1/mailboxes', undefined, 200],
+    ['POST /api/v1/mailboxes', '/api/v1/mailboxes', { email: `routes-${randomBytes(4).toString('hex')}@example.test`, name: 'Routes 2' }, 200],
+    ['GET /api/v1/mailboxes/:x', base, undefined, 200],
+    ['PUT /api/v1/mailboxes/:x', base, { settings: {} }, 200],
+    ['GET /api/v1/mailboxes/:x/emails', `${base}/emails?folder=inbox`, undefined, 200],
+    ['GET /api/v1/mailboxes/:x/emails/:x', emailPath, undefined, 200],
+    ['PUT /api/v1/mailboxes/:x/emails/:x', emailPath, { read: true }, 200],
+    ['POST /api/v1/mailboxes/:x/emails/:x/move', `${base}/emails/${second.id}/move`, { folderId: 'archive' }, 200],
+    ['GET /api/v1/mailboxes/:x/threads/:x', `${base}/threads/${email.thread_id}`, undefined, 200],
+    ['POST /api/v1/mailboxes/:x/threads/:x/read', `${base}/threads/${email.thread_id}/read`, {}, 200],
+    ['GET /api/v1/mailboxes/:x/emails/:x/attachments/:x', `${emailPath}/attachments/${anyId}`, undefined, 404],
+    ['POST /api/v1/mailboxes/:x/drafts', `${base}/drafts`, { to: 'someone@example.test', subject: 'Routes', body: '<p>x</p>' }, 200],
+    ['GET /api/v1/mailboxes/:x/folders', `${base}/folders`, undefined, 200],
+    ['POST /api/v1/mailboxes/:x/folders', `${base}/folders`, { name: 'Routes 3' }, 200],
+    ['PUT /api/v1/mailboxes/:x/folders/:x', `${base}/folders/${folder}`, { name: 'Routes 2' }, 200],
+    ['GET /api/v1/mailboxes/:x/approvals', `${base}/approvals`, undefined, 200],
+    ['POST /api/v1/mailboxes/:x/drafts/:x/approval', `${base}/drafts/${anyId}/approval`, { action: 'approve' }, 404],
+    ['GET /api/v1/mailboxes/:x/search', `${base}/search?q=OLED`, undefined, 200],
+    ['GET /api/v1/admin/overview', '/api/v1/admin/overview', undefined, 200],
+    ['GET /api/v1/admin/action-queue', '/api/v1/admin/action-queue', undefined, 200],
+    ['GET /api/v1/admin/clients', '/api/v1/admin/clients', undefined, 200],
+    ['GET /api/v1/admin/clients/:x', `/api/v1/admin/clients/${client.id}`, undefined, 200],
+    ['POST /api/v1/admin/clients', '/api/v1/admin/clients', { name: 'Routes 2', company: 'Routes 2 Co' }, 201],
+    ['PUT /api/v1/admin/clients/:x', `/api/v1/admin/clients/${client.id}`, { name: 'Routes', company: 'Routes Co' }, 200],
+    ['GET /api/v1/admin/tasks', '/api/v1/admin/tasks', undefined, 200],
+    ['GET /api/v1/admin/tasks/:x', `/api/v1/admin/tasks/${task.id}`, undefined, 200],
+    ['POST /api/v1/admin/tasks', '/api/v1/admin/tasks', taskBody, 201],
+    ['PUT /api/v1/admin/tasks/:x', `/api/v1/admin/tasks/${task.id}`, { ...taskBody, title: 'Routes 2' }, 200],
+    ['POST /api/v1/admin/requests/from-email', '/api/v1/admin/requests/from-email', { mailboxId, emailId: email.id }, 201],
+    ['GET /api/v1/admin/cost/daily', '/api/v1/admin/cost/daily', undefined, 200],
+    ['GET /api/v1/admin/cost/monthly', '/api/v1/admin/cost/monthly', undefined, 200],
+    ['GET /api/v1/admin/cost/models', '/api/v1/admin/cost/models', undefined, 200],
+    ['GET /api/v1/mailboxes/:x/segments', `${base}/segments`, undefined, 200],
+    ['GET /api/v1/mailboxes/:x/admin/sla', `${base}/admin/sla`, undefined, 200],
+    ['POST /api/v1/mailboxes/:x/demo-campaigns/seed', `${base}/demo-campaigns/seed`, {}, 200],
+    ['GET /api/v1/mailboxes/:x/emails/:x/campaign-workspace', `${emailPath}/campaign-workspace`, undefined, 200],
+    ['PUT /api/v1/mailboxes/:x/emails/:x/campaign-workspace', `${emailPath}/campaign-workspace`, { requirements: { assets: 'PC 600×600' } }, 200],
+    ['POST /api/v1/mailboxes/:x/emails/:x/campaign-workspace/reply', `${emailPath}/campaign-workspace/reply`, { subject: 'Re: Routes', body: 'body' }, 200],
+    ['POST /api/v1/mailboxes/:x/emails/:x/campaign-workspace/campaign', `${emailPath}/campaign-workspace/campaign`, { title: 'Routes', notes: '', requirements: { assets: 'PC 600×600' } }, 200],
+    // Writes this build refuses. The route answers with its own refusal.
+    ['POST /api/v1/mailboxes/:x/emails', `${base}/emails`, message, 403],
+    ['POST /api/v1/mailboxes/:x/emails/:x/reply', `${emailPath}/reply`, message, 403],
+    ['POST /api/v1/mailboxes/:x/emails/:x/forward', `${emailPath}/forward`, message, 403],
+    ['POST /api/v1/mailboxes/:x/ai/draft', `${base}/ai/draft`, { email_id: email.id }, 503],
+    ['POST /api/v1/mailboxes/:x/ai/chat', `${base}/ai/chat`, { messages: [] }, 503],
+    ['POST /api/v1/mailboxes/:x/agent-feedback', `${base}/agent-feedback`, { call_id: 'c1', score: 1 }, 503],
+    ['DELETE /api/v1/mailboxes/:x/agent-feedback/:x/:x', `${base}/agent-feedback/c1/1`, {}, 503],
+    ['GET /api/v1/mailboxes/:x/agent-feedback/summary', `${base}/agent-feedback/summary`, undefined, 503],
+    ['POST /api/v1/mailboxes/:x/emails/send', `${base}/emails/send`, message, 403],
+    ['POST /api/v1/mailboxes/:x/test-autodraft', `${base}/test-autodraft`, { email_id: email.id }, 503],
+    ['POST /api/v1/admin/agent-usage', '/api/v1/admin/agent-usage', { agentId: 'routes' }, 503],
+    // Deletes last: they remove what the rows above still need.
+    ['DELETE /api/v1/mailboxes/:x/emails/:x', `${base}/emails/${third.id}`, {}, 200],
+    ['DELETE /api/v1/mailboxes/:x/folders/:x', `${base}/folders/${folder}`, {}, 200],
+    ['DELETE /api/v1/mailboxes/:x', `/api/v1/mailboxes/${scratch}`, {}, 200],
+  ];
+  for (const [shape, path, body, status] of table) {
+    const response = await call(path, { method: shape.split(' ')[0], body });
+    // A route that is missing answers with the framework's HTML, which does not parse as JSON.
+    assert.deepEqual([shape, response.status, response.body === null ? 'not JSON' : 'JSON'], [shape, status, 'JSON']);
+  }
+
+  // Both ways: nothing the client calls is left unexercised, and nothing stale stays in the table.
+  const listed = new Set(table.map(([shape]) => shape));
+  const called = clientRoutes();
+  assert.deepEqual([...called].filter((shape) => !listed.has(shape)).sort(), [], 'the client calls a route this table does not exercise');
+  assert.deepEqual([...listed].filter((shape) => !called.has(shape) && !SERVER_ONLY.includes(shape)).sort(), [], 'the table keeps a route the client no longer calls');
+  assert.deepEqual([...called].filter((shape) => SERVER_ONLY.includes(shape)), [], 'a server-only route is now called by the client');
 });
 
 test('a server fault is logged and not explained to the caller; a caller mistake still is', { skip }, async () => {
@@ -427,6 +537,11 @@ test('a server fault is logged and not explained to the caller; a caller mistake
     await pool.end();
   }
   assert.equal((await save('probe-fine')).status, 200);
+  // thread_id and in_reply_to are TEXT columns: free text there is not a mistake.
+  assert.equal((await call(`${base}/drafts`, { method: 'POST', body: { to: 'someone@example.test', subject: 'free', body: 'x', thread_id: '<thread@msg>', in_reply_to: '<parent@msg>' } })).status, 200);
+  // Ids that arrive in a body cannot be checked as path parameters, so the route checks them itself.
+  const bodyIds = await call('/api/v1/admin/requests/from-email', { method: 'POST', body: { mailboxId: 'garbage', emailId: 'garbage' } });
+  assert.deepEqual([bodyIds.status, bodyIds.body.error], [400, { code: 'VALIDATION_ERROR', message: 'mailboxId must be a UUID' }]);
   const mistake = await call(`${base}/drafts`, { method: 'POST', body: { to: 'someone@example.test', subject: 'x', body: 'x', draft_id: 'not-a-uuid' } });
   assert.deepEqual([mistake.status, mistake.body.error], [400, { code: 'VALIDATION_ERROR', message: 'draft_id must be a UUID' }]);
 });
@@ -443,6 +558,9 @@ test('a client page lists the emails written by the client and the ones that onl
     await insert('someone@elsewhere.org', '문의 드립니다', '내용입니다');
     await insert('stranger@nowhere.org', '안부 인사', 'Example 회사와 함께 진행하고 싶습니다');
     await insert('bystander@nowhere.org', '안부 인사', '다른 회사 이야기입니다');
+    // A company of two words: found where the words stand together, not where they occur apart.
+    await insert('together@nowhere.org', '안부 인사', 'Example Media와 계약을 진행합니다');
+    await insert('apart@nowhere.org', '안부 인사', 'Media 일정을 Example 팀과 조율합니다');
   } finally {
     await pool.end();
   }
@@ -456,6 +574,12 @@ test('a client page lists the emails written by the client and the ones that onl
   assert.ok(senders.includes('stranger@nowhere.org'), 'matched by a company name in the body');
   assert.ok(!senders.includes('bystander@nowhere.org'), 'unrelated mail is not listed');
   assert.deepEqual([detail.body.data.stats.totalTasks, detail.body.data.client.company], [0, 'Example']);
+
+  const media = (await call('/api/v1/admin/clients', { method: 'POST', body: { name: 'Media', company: 'Example Media' } })).body.data;
+  const mediaSenders = (await call(`/api/v1/admin/clients/${media.id}`)).body.data.relatedEmails.map((row) => row.sender);
+  assert.ok(mediaSenders.includes('together@nowhere.org'), 'the two words stand together');
+  assert.ok(!mediaSenders.includes('apart@nowhere.org'), 'the same two words apart are not the company');
+  assert.ok(!mediaSenders.includes('stranger@nowhere.org'), 'a body with only the first word is not the company');
 });
 
 test('a thread is found by its id, which is a message id and not a UUID', { skip }, async () => {

@@ -39,6 +39,7 @@ import {
   readString,
   readTags,
   sendError,
+  validationError,
   wrapAsyncRoutes,
 } from './lib/http.js';
 import {
@@ -508,7 +509,9 @@ app.get('/api/v1/admin/action-queue', async (req, res) => {
 // Addresses and subjects are short columns, so a LIKE over them is cheap. The
 // body is not: a LIKE there unpacks every stored message in every mailbox
 // (1.1 s for 20,000 messages of 22 KB). Company mentions in the body go
-// through the search index instead, matched as word prefixes.
+// through the search index instead: the company's words in a row, each matched
+// as a word prefix, so "Example Media" is found where those two words stand
+// together and not wherever the two happen to occur apart.
 async function relatedEmails(client) {
   const columns = 'id, mailbox_id, subject, sender, recipient, received_at';
   const branches = [];
@@ -519,7 +522,7 @@ async function relatedEmails(client) {
   }
   const words = (client.company || '').toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
   if (words.length) {
-    params.push(`%${client.company.toLowerCase()}%`, words.map((word) => `${word}:*`).join(' & '));
+    params.push(`%${client.company.toLowerCase()}%`, words.map((word) => `${word}:*`).join(' <-> '));
     branches.push(`SELECT ${columns} FROM emails WHERE LOWER(subject) LIKE LOWER($${params.length - 1}) OR search_vector @@ to_tsquery('simple', $${params.length})`);
   }
   if (!branches.length) return [];
@@ -686,6 +689,10 @@ app.post('/api/v1/admin/requests/from-email', async (req, res) => {
   const actor = requireAdminRole(req, res, ['admin', 'manager', 'operator']);
   if (!actor) return;
   const { mailboxId, emailId, clientId = '', owner = '' } = req.body;
+  // These ids arrive in the body, so the check on path parameters cannot vouch for them.
+  for (const [field, value] of [['mailboxId', mailboxId], ['emailId', emailId]]) {
+    if (!isUuid(value)) validationError(`${field} must be a UUID`);
+  }
   const { rows: emailRows } = await query('SELECT * FROM emails WHERE mailbox_id = $1 AND id = $2', [mailboxId, emailId]);
   if (!emailRows.length) return sendError(res, 404, 'Email not found');
   const email = emailRows[0];
