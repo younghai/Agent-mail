@@ -54,6 +54,9 @@ async function createMailbox() {
 }
 
 before(async () => {
+  // Without the variable nothing here may run: an empty connection string
+  // falls back to PostgreSQL's defaults, which is the developer's own server.
+  if (!DATABASE_URL) return;
   const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 1 });
   await runMigrations(pool, MIGRATIONS);
   await pool.end();
