@@ -75,7 +75,7 @@ Underneath: email rows have one shape from every endpoint; the list no longer sh
 - The Cloudflare Workers deployment target (`client/workers/`, `wrangler.jsonc` and the Cloudflare build config) is preserved. `wrangler.jsonc` names a production domain. Retiring it is an owner's decision.
 - The sidebar has 18 links in three groups. The first-run audit measures this against a budget of 8; the main group alone has 7. Not redesigned here.
 - `smtp_config` and `ai_conversations` have no readers. Dropping a table is a data deletion and was not done.
-- On a client's page, a company name in an email body counts only where its words stand together, each as a whole word or the start of one. A name buried inside a longer word, or a two-word name whose words appear in different places, no longer counts. The address and the subject match as before.
+- On a client's page, a company name in an email body counts only where its words stand together, each as a whole word or the start of one. A name buried inside a longer word, or a two-word name whose words appear in different places, no longer counts. The address and the subject match as before. One measured edge remains: the search index stores the subject, the sender's name and the body as one run of words, so a two-word name also matches where its first word ends the subject and the next field begins with its second.
 
 ## 3. Repository Layout
 
