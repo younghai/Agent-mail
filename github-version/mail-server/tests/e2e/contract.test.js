@@ -377,7 +377,6 @@ test('an id that is not a UUID names nothing: 404, not a server fault', { skip }
   const base = `/api/v1/mailboxes/${await createMailbox()}`;
   const probes = [
     ['GET', `${base}/emails/not-a-uuid`],
-    ['GET', `${base}/threads/not-a-uuid`],
     ['GET', `${base}/emails/${randomUUID()}/attachments/not-a-uuid`],
     ['PUT', `${base}/emails/not-a-uuid`],
     ['DELETE', `${base}/folders/not-a-uuid`],
@@ -389,6 +388,9 @@ test('an id that is not a UUID names nothing: 404, not a server fault', { skip }
     const response = await call(path, { method, body: method === 'GET' ? undefined : {} });
     assert.deepEqual([path, response.status, response.body?.error?.code], [path, 404, 'ERROR'], `${method} ${path}`);
   }
+  // A thread id is free text (a Message-ID for real mail), so an unknown one is simply a thread with no mail.
+  const unknownThread = await call(`${base}/threads/not-a-uuid`);
+  assert.deepEqual([unknownThread.status, unknownThread.body?.data], [200, []]);
 });
 
 test('every route the React app relies on is registered on the shipped server', { skip }, async () => {
@@ -454,4 +456,27 @@ test('a client page lists the emails written by the client and the ones that onl
   assert.ok(senders.includes('stranger@nowhere.org'), 'matched by a company name in the body');
   assert.ok(!senders.includes('bystander@nowhere.org'), 'unrelated mail is not listed');
   assert.deepEqual([detail.body.data.stats.totalTasks, detail.body.data.client.company], [0, 'Example']);
+});
+
+test('a thread is found by its id, which is a message id and not a UUID', { skip }, async () => {
+  const base = await seededMailbox();
+  const mailboxId = base.split('/').pop();
+  // Real inbound mail threads by Message-ID or In-Reply-To header (lib/inbound-email.js); the column is TEXT.
+  const threadId = '<conversation-7f3a@mail.example.org>';
+  const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 1 });
+  try {
+    for (const sender of ['first@example.org', 'second@example.org']) {
+      await pool.query(
+        `INSERT INTO emails (mailbox_id, folder_id, thread_id, subject, sender, recipient, body_text, email_date)
+         SELECT $1, f.id, $2, 'Re: a real thread', $3, 'me@example.test', 'body', now()
+         FROM folders f WHERE f.mailbox_id = $1 AND f.slug = 'inbox'`, [mailboxId, threadId, sender]);
+    }
+  } finally {
+    await pool.end();
+  }
+  const thread = await call(`${base}/threads/${encodeURIComponent(threadId)}`);
+  assert.deepEqual([thread.status, thread.body?.data?.length], [200, 2], 'the thread route must not demand a UUID');
+  assert.ok(thread.body.data.every((row) => row.thread_id === threadId));
+  const detail = await call(`${base}/emails/${thread.body.data[0].id}`);
+  assert.equal(detail.body.data.thread_id, threadId);
 });

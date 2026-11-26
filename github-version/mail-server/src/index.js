@@ -111,7 +111,9 @@ app.param('mailboxId', async (req, res, next, mailboxId) => {
 });
 // Every other id names a row by UUID. One that is not a UUID names nothing,
 // so it is a 404 here instead of a database error further along.
-for (const name of ['id', 'emailId', 'threadId', 'attachmentId', 'clientId', 'taskId']) {
+// threadId is not among them: a thread's id is TEXT and, for real inbound
+// mail, the Message-ID or In-Reply-To header.
+for (const name of ['id', 'emailId', 'attachmentId', 'clientId', 'taskId']) {
   app.param(name, (req, res, next, value) => (isUuid(value) ? next() : sendError(res, 404, 'Not found')));
 }
 
